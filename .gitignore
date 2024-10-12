@@ -1,0 +1,5 @@
+build
+record
+third_party
+*.tar.gz
+*.pdf
