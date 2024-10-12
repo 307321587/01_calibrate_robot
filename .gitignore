@@ -1,5 +1,6 @@
 build
 record
 third_party
-*.tar.gz
 *.pdf
+*.tar.gz
+遨博机器人
