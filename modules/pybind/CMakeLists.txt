@@ -14,7 +14,7 @@ find_package(pybind11 CONFIG REQUIRED)
 file(GLOB mains RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
 include_directories("include")
 
-pybind11_add_module(robot src/example.cpp)
+pybind11_add_module(robot src/aubo_sdk.cpp)
 install(TARGETS robot DESTINATION .)
 target_link_libraries(robot PRIVATE ${VISON_DEPENLIBS} ${ROBOT_DEPENLIBS}) 
 

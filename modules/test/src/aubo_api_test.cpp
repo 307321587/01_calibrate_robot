@@ -8,11 +8,7 @@
 
 using namespace std;
 
-<<<<<<< HEAD
-#define SERVER_HOST "192.168.31.6"
-=======
 #define SERVER_HOST "192.168.123.96"
->>>>>>> 0146bb0e4f0d451665d5804e32101ed06dec47b8
 #define SERVER_PORT 8899
 
 #define FILE_PATH                                                    \
@@ -42,12 +38,7 @@ public:
             }
             catch (const char *p)
             {
-<<<<<<< HEAD
                 std::cerr << "Line: " << linenum << " \"" << p << "\"" << " is not a number of double" << std::endl;
-=======
-                std::cerr << "Line: " << linenum << " \"" << p << "\""
-                          << " is not a number of double" << std::endl;
->>>>>>> 0146bb0e4f0d451665d5804e32101ed06dec47b8
                 break;
             }
             linenum++;
@@ -101,19 +92,11 @@ int main()
 
     auto traj = input.parse();
     auto traj_sz = traj.size();
-<<<<<<< HEAD
-    if (traj_sz == 0)
-    {
-        std::cerr << "No waypoints" << std::endl;
-        return -1;
-    }
-=======
     // if (traj_sz == 0)
     // {
     //     std::cerr << "No waypoints" << std::endl;
     //     return -1;
     // }
->>>>>>> 0146bb0e4f0d451665d5804e32101ed06dec47b8
 
     ServiceInterface robotService;
 
@@ -171,16 +154,13 @@ int main()
         std::cout << "joint_angle: " << joint_angle << std::endl;
     }
     std::cout << "--------------------当前路点正解--------------------" << std::endl;
-    std::cout << "正解得到的路点位置："
-              << " x = " << currentWaypoint.cartPos.position.x << " y = " << currentWaypoint.cartPos.position.y << " z = " << currentWaypoint.cartPos.position.z << std::endl;
-    std::cout << "正解得到的目标路点的姿态（四元数）："
-              << " w = " << currentWaypoint.orientation.w << " x = " << currentWaypoint.orientation.x << " y = " << currentWaypoint.orientation.y << " z = " << currentWaypoint.orientation.z
-              << std::endl;
+    std::cout << "正解得到的路点位置：" << " x = " << currentWaypoint.cartPos.position.x << " y = " << currentWaypoint.cartPos.position.y << " z = " << currentWaypoint.cartPos.position.z << std::endl;
+    std::cout << "正解得到的目标路点的姿态（四元数）：" << " w = " << currentWaypoint.orientation.w << " x = " << currentWaypoint.orientation.x << " y = " << currentWaypoint.orientation.y
+              << " z = " << currentWaypoint.orientation.z << std::endl;
     // 四元数转欧拉角
     aubo_robot_namespace::Rpy rpy;
     robotService.quaternionToRPY(currentWaypoint.orientation, rpy);
-    std::cout << "正解得到的目标路点的姿态（欧拉角）:"
-              << " RX = " << rpy.rx * 180 / M_PI << " RY = " << rpy.ry * 180 / M_PI << " RZ = " << rpy.rz * 180 / M_PI << std::endl;
+    std::cout << "正解得到的目标路点的姿态（欧拉角）:" << " RX = " << rpy.rx * 180 / M_PI << " RY = " << rpy.ry * 180 / M_PI << " RZ = " << rpy.rz * 180 / M_PI << std::endl;
 
     // 根据当前路点的关节角，正解得到目标路点
     aubo_robot_namespace::wayPoint_S targetWaypoint;
@@ -188,16 +168,14 @@ int main()
     if (ret == aubo_robot_namespace::InterfaceCallSuccCode)
     {
         std::cout << "--------------------正解--------------------" << std::endl;
-        std::cout << "正解得到的路点位置："
-                  << " x = " << targetWaypoint.cartPos.position.x << " y = " << targetWaypoint.cartPos.position.y << " z = " << targetWaypoint.cartPos.position.z << std::endl;
-        std::cout << "正解得到的目标路点的姿态（四元数）："
-                  << " w = " << targetWaypoint.orientation.w << " x = " << targetWaypoint.orientation.x << " y = " << targetWaypoint.orientation.y << " z = " << targetWaypoint.orientation.z
+        std::cout << "正解得到的路点位置：" << " x = " << targetWaypoint.cartPos.position.x << " y = " << targetWaypoint.cartPos.position.y << " z = " << targetWaypoint.cartPos.position.z
                   << std::endl;
+        std::cout << "正解得到的目标路点的姿态（四元数）：" << " w = " << targetWaypoint.orientation.w << " x = " << targetWaypoint.orientation.x << " y = " << targetWaypoint.orientation.y
+                  << " z = " << targetWaypoint.orientation.z << std::endl;
         // 四元数转欧拉角
         aubo_robot_namespace::Rpy rpy;
         robotService.quaternionToRPY(targetWaypoint.orientation, rpy);
-        std::cout << "正解得到的目标路点的姿态（欧拉角）:"
-                  << " RX = " << rpy.rx * 180 / M_PI << " RY = " << rpy.ry * 180 / M_PI << " RZ = " << rpy.rz * 180 / M_PI << std::endl;
+        std::cout << "正解得到的目标路点的姿态（欧拉角）:" << " RX = " << rpy.rx * 180 / M_PI << " RY = " << rpy.ry * 180 / M_PI << " RZ = " << rpy.rz * 180 / M_PI << std::endl;
     }
     else
     {
