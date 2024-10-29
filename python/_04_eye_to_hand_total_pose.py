@@ -36,17 +36,24 @@ if __name__=="__main__":
     distance2end=0.7
     camera_pos=end_pos-np.array([0,distance2end,0])
 
-    target_distance=0.4
+    target_distance=0.3
     target_pos=end_pos-np.array([0,target_distance,0])
-
-    end_poses=shell_section(camera_pos,distance2end,distance2end,1,-15,10,10,60,110,50)
+    end_poses=shell_section(target_pos,target_distance,target_distance,1,-15,20,10,45,145,50) 
+    # 1280,720 1.88 0.0096 640 480 2.54 0.0095
+    # end_poses=shell_section(target_pos,target_distance,target_distance,1,-45,30,10,40,120,50) 3.8 0.01
+    # end_poses=shell_section(target_pos,target_distance,target_distance,1,-60,30,10,40,120,50)
+    # end_poses=shell_section(camera_pos,distance2end,distance2end,1,-15,10,10,60,110,50)
     realsense_cam=create_camera('oak',1920,1080)
 
     length=end_poses.shape[0]
     end_rot_angle=np.random.rand(length,1)*np.pi #夹爪随机角度
 
+    
+
     gts=[]
     for index,end_pose in enumerate(end_poses):
+        if index%23!=0:
+            continue
 
         Tend2world=compute_end_matrix(end_pose,target_pos,up_vector)
         # rand_R=np.array(mathutils.Matrix.Rotation(end_rot_angle[index], 3, end_rot_axis[index]))
@@ -54,8 +61,8 @@ if __name__=="__main__":
         euler=R.from_matrix(Tend2world[:3,:3]).as_euler('xyz')
         trans=Tend2world[:3,3]
         action=np.concatenate((trans,euler))
-        robot.movel_random_effctor(action,end_rot_angle[index])
-        # robot.movel_random_effctor(action,-np.pi/2)
+        # robot.movel_random_effctor(action,end_rot_angle[index])
+        robot.movel_random_effctor(action,-np.pi/2)
         # robot.movel(action)
 
         color_image=realsense_cam.get_color_image()

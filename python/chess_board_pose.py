@@ -11,31 +11,52 @@ import os
 from dataset_collect.inout import save_json,save_im
 from scipy.spatial.transform import Rotation as R
 
+square_size = 0.01  # 标定板每个格子的尺寸（假设单位为米)
 
-def detect_aruco(img,camera_matrix):
-    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_100)
-    arucoParams = cv2.aruco.DetectorParameters()
-    detector=cv2.aruco.ArucoDetector(arucoDict)
-    (corners, ids, rejected) = detector.detectMarkers(img)
-    marker_length=0.1
-    corners_3d=np.array([[-marker_length/2,marker_length/2,0],[marker_length/2,marker_length/2,0],[marker_length/2,-marker_length/2,0],[-marker_length/2,-marker_length/2,0]])
-    if ids is not None:
-        corners_detect=np.squeeze(corners[0])
-        flag,rvecs,tvecs=cv2.solvePnP(corners_3d,corners_detect,camera_matrix,np.zeros(5))
-        
-        cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
-        repoj_corners_subpix, _ = cv2.projectPoints(corners_3d, rvecs, tvecs, camera_matrix, np.zeros(5))
-        repoj_corners_subpix=np.squeeze(repoj_corners_subpix)
-        repoj_error=np.mean(np.linalg.norm(corners_detect-repoj_corners_subpix,axis=1))
-        show_corner=(int(corners_detect[0][0]),int(corners_detect[0][1]))
-        show_corner_reproj=(int(repoj_corners_subpix[0][0]),int(repoj_corners_subpix[0][1]))
-        cv2.circle(img,show_corner,4,(255,0,0))
-        cv2.circle(img,show_corner_reproj,4,(0,0,255))
+dist_coeffs = np.array([0, 0, 0, 0, 0], dtype=np.float64)  # 畸变系数  
+
+def get_intrinsics(profile):
+    intr = profile.as_video_stream_profile().get_intrinsics()
+    camera_matrix=np.array([[intr.fx, 0, intr.ppx], [0, intr.fy, intr.ppy], [0, 0, 1]])
+    coeffs=intr.coeffs
+    print(f"Camera Intrinsics:{camera_matrix}")
+    print(f'coeffs:{coeffs}')
+    return camera_matrix,coeffs
+
+def get_RT_from_chessboard(img,camera_matrix):
+    '''
+    :param img_path: 读取图片路径
+    :param chess_board_x_num: 棋盘格x方向格子数
+    :param chess_board_y_num: 棋盘格y方向格子数
+    :param K: 相机内参
+    :param chess_board_len: 单位棋盘格长度,mm
+    :return: 相机外参
+    '''
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    # size = gray.shape[::-1]
+    ret, corners = cv2.findChessboardCorners(img, (11, 8), flags=cv2.CALIB_CB_ADAPTIVE_THRESH)  
+
+    
+    # print(object_points)
+
+    if ret:  # 如果成功找到了角点  
+        corners_subpix=cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
+        obj_points = np.zeros((11*8,3),dtype=np.float64)
+        obj_points[:,:2] = np.mgrid[0:11,0:8].T.reshape(-1,2) * square_size
+        # 通过角点坐标和标定板的实际尺寸来计算标定板的位姿  
+        _,rvecs, tvecs,_ = cv2.solvePnPRansac(obj_points, corners_subpix, camera_matrix, dist_coeffs) 
+        RT=np.column_stack(((cv2.Rodrigues(rvecs))[0],tvecs))
+        RT = np.row_stack((RT, np.array([0, 0, 0, 1]))) 
+        # 计算重投影误差
+        repoj_corners_subpix, _ = cv2.projectPoints(obj_points, rvecs, tvecs, camera_matrix, dist_coeffs)
+        repoj_error=np.mean(np.linalg.norm(corners_subpix-repoj_corners_subpix,axis=1))
         cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
         print(f'reproje error:{repoj_error}')
-        # print(f"rotation: {rvec} translation:{tvec}") 
+        rvecs=np.squeeze(rvecs)
+        tvecs=np.squeeze(tvecs)
         return rvecs,tvecs
-    return None,None
+    else:
+        return None,None
 
 
 if __name__ == "__main__":
@@ -58,7 +79,7 @@ if __name__ == "__main__":
             
             color_image = realsense_cam.get_color_image()
             save_image=color_image.copy()
-            rvec,tvec=detect_aruco(color_image,camera_matrix)
+            rvec,tvec=get_RT_from_chessboard(color_image,camera_matrix)
             # Show images
             cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
             cv2.imshow('RealSense', color_image)
@@ -81,4 +102,5 @@ if __name__ == "__main__":
     finally:
         # Stop streaming
         save_json(os.path.join(save_path,"record.json"),gts)
+        # realsense_cam.stop()
         robot.log_out()
