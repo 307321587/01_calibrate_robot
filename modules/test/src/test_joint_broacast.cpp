@@ -125,12 +125,12 @@ void realTimeCalJointStatus()
                 vector<std::string> joint_names;
                 vector<double> joint_positions;
                 parseJointData(complete_data, joint_names, joint_positions);
-                std::cout << "Joint positions: ";
-                for (size_t i = 0; i < joint_positions.size(); ++i)
-                {
-                    std::cout << joint_positions[i] << " ";
-                }
-                std::cout << std::endl;
+                // std::cout << "Joint positions: ";
+                // for (size_t i = 0; i < joint_positions.size(); ++i)
+                // {
+                //     std::cout << joint_positions[i] << " ";
+                // }
+                // std::cout << std::endl;
 
                 start_pos = accumulated_data.find("<PACK_BEGIN");
                 end_pos = accumulated_data.find("PACK_END>");

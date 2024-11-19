@@ -185,10 +185,6 @@ void realTimeCalJointStatus()
         return;
     }
 
-    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
-    ofstream file(path);
-    auto start = chrono::system_clock::now();
-
     char buffer[1550] = {0};
     std::string accumulated_data;
     while (key != 'q')
@@ -203,6 +199,7 @@ void realTimeCalJointStatus()
         if (success)
         {
             accumulated_data.append(buffer, valread);
+
             size_t start_pos = accumulated_data.find("<PACK_BEGIN");
             size_t end_pos = accumulated_data.find("PACK_END>");
 
@@ -222,24 +219,6 @@ void realTimeCalJointStatus()
                 parseJointData(complete_data, joint_names, joint_positions);
                 // 加锁
                 joint_positions_global = joint_positions;
-
-                auto end = chrono::system_clock::now();
-                auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
-                file << duration.count() << ",";
-                std::cout << duration.count() << ",";
-                for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
-                {
-                    if (pos == joint_positions_global.end() - 1)
-                    {
-                        std::cout << *pos << endl;
-                        file << *pos << endl;
-                    }
-                    else
-                    {
-                        std::cout << *pos << ",";
-                        file << *pos << ",";
-                    }
-                }
 
                 // 输出计算结果
                 // std::cout << "Joint positions: ";
@@ -265,10 +244,8 @@ void realTimeCalJointStatus()
             }
         }
         memset(buffer, 0, sizeof(buffer));
-        // this_thread::sleep_for(chrono::microseconds(1000));
     }
     close(sock);
-    file.close();
 }
 
 int main()

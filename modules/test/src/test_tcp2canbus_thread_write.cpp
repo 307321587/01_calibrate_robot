@@ -8,10 +8,12 @@
 #include <arpa/inet.h>
 #include <jsoncpp/json/json.h>
 #include <mutex>
+#include <string>
 #include <thread>
 
 using namespace std;
-char key = 'a';
+char volatile key = 'a';
+bool volatile read_flag = false; // 不加volatile在release模式下会出现问题
 #define SERVER_HOST "192.168.123.96"
 #define SERVER_PORT 8899
 
@@ -121,7 +123,8 @@ int connectToServer(const std::string &ip, int port)
 }
 
 vector<double> joint_positions_global = {0, 0, 0, 0, 0, 0};
-std::mutex mtx;
+std::mutex control_mtx;
+std::mutex read_save_mtx;
 
 void parseJointData(const std::string &data, std::vector<std::string> &joint_names, std::vector<double> &joint_positions)
 {
@@ -171,6 +174,141 @@ void parseJointData(const std::string &data, std::vector<std::string> &joint_nam
     }
 }
 
+void realTimeCalJointStatus()
+{
+    std::string tcp_ip = SERVER_HOST;
+    int tcp_port = 8891;
+
+    int sock = connectToServer(tcp_ip, tcp_port);
+    if (sock < 0)
+    {
+        return;
+    }
+
+    // string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    // ofstream file(path);
+    // auto start = chrono::system_clock::now();
+
+    char buffer[1550] = {0};
+    std::string accumulated_data;
+    while (key != 'q')
+    {
+        int valread = 0;
+        {
+            std::lock_guard<mutex> lock(control_mtx);
+            valread = read(sock, buffer, sizeof(buffer));
+        }
+
+        bool success = (valread > 0);
+        if (success)
+        {
+            accumulated_data.append(buffer, valread);
+
+            size_t start_pos = accumulated_data.find("<PACK_BEGIN");
+            size_t end_pos = accumulated_data.find("PACK_END>");
+
+            while (start_pos != std::string::npos && end_pos != std::string::npos)
+            {
+                if (end_pos + 8 > accumulated_data.size())
+                {
+                    break;
+                }
+
+                std::string complete_data = accumulated_data.substr(start_pos, end_pos - start_pos + 9);
+                accumulated_data.erase(0, end_pos + 8);
+
+                vector<std::string> joint_names;
+                vector<double> joint_positions;
+
+                parseJointData(complete_data, joint_names, joint_positions);
+                // 加锁
+                {
+                    std::lock_guard<mutex> lock(read_save_mtx);
+                    joint_positions_global = joint_positions;
+                    read_flag = true;
+                }
+
+                // auto end = chrono::system_clock::now();
+                // auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+                // file << duration.count() << ",";
+                // std::cout << duration.count() << ",";
+                // for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
+                // {
+                //     if (pos == joint_positions_global.end() - 1)
+                //     {
+                //         std::cout << *pos << endl;
+                //         file << *pos << endl;
+                //     }
+                //     else
+                //     {
+                //         std::cout << *pos << ",";
+                //         file << *pos << ",";
+                //     }
+                // }
+
+                // 输出计算结果
+                // std::cout << "Joint positions: ";
+                // for (size_t i = 0; i < joint_positions.size(); ++i)
+                // {
+                //     std::cout << joint_positions[i] << " ";
+                // }
+                // std::cout << std::endl;
+
+                start_pos = accumulated_data.find("<PACK_BEGIN");
+                end_pos = accumulated_data.find("PACK_END>");
+            }
+        }
+        else
+        {
+            close(sock);
+
+            sock = connectToServer(tcp_ip, tcp_port);
+            while (sock < 0)
+            {
+                sleep(1);
+                sock = connectToServer(tcp_ip, tcp_port);
+            }
+        }
+        memset(buffer, 0, sizeof(buffer));
+    }
+    close(sock);
+    // file.close();
+}
+
+void writeToFile()
+{
+    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    ofstream file(path);
+    auto start = chrono::system_clock::now();
+    while (key != 'q')
+    {
+        // cout << read_flag << endl;
+        if (read_flag)
+        {
+            std::lock_guard<mutex> lock(read_save_mtx);
+            auto end = chrono::system_clock::now();
+            auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+            file << duration.count() << ",";
+            std::cout << duration.count() << ",";
+            for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
+            {
+                if (pos == joint_positions_global.end() - 1)
+                {
+                    std::cout << *pos << endl;
+                    file << *pos << endl;
+                }
+                else
+                {
+                    std::cout << *pos << ",";
+                    file << *pos << ",";
+                }
+            }
+            read_flag = false;
+        }
+    }
+    file.close();
+}
+
 int main()
 {
     // // 实时优先级最大值、最小值
@@ -193,15 +331,9 @@ int main()
     // {
     //     perror("Sched_setaffinity fail!");
     // }
-    std::string tcp_ip = SERVER_HOST;
-    int tcp_port = 8891;
 
-    int sock = connectToServer(tcp_ip, tcp_port);
-    if (sock < 0)
-    {
-        return 0;
-    }
-
+    std::thread joint_status_thread(realTimeCalJointStatus);
+    std::thread write_thread(writeToFile);
     // 0. Read waypoint file
     TrajectoryIo input(FILE_PATH);
 
@@ -229,7 +361,7 @@ int main()
         return -1;
     }
 
-    aubo_robot_namespace::RobotWorkMode mode = aubo_robot_namespace::RobotModeSimulator;
+    aubo_robot_namespace::RobotWorkMode mode = aubo_robot_namespace::RobotModeReal;
     robotService.robotServiceGetRobotWorkMode(mode);
 
     // 2. Startup
@@ -270,95 +402,31 @@ int main()
 
     // 5. Start send waypoint to arm
     int cnt = 0;
-    char buffer[1550] = {0};
-    std::string accumulated_data;
-    while (key != 'q' && cnt < traj_sz)
+    while (cnt < traj_sz)
     {
-        int valread = 0;
+        std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
+        double joint_angle[6];
+        for (int i = 0; i < 6; i++) joint_angle[i] = traj[cnt][i];
+        cnt++;
 
-        valread = read(sock, buffer, sizeof(buffer));
-
-        bool success = (valread > 0);
-        if (success)
+        auto start = chrono::system_clock::now();
         {
-            accumulated_data.append(buffer, valread);
-
-            size_t start_pos = accumulated_data.find("<PACK_BEGIN");
-            size_t end_pos = accumulated_data.find("PACK_END>");
-
-            while (start_pos != std::string::npos && end_pos != std::string::npos)
-            {
-                if (end_pos + 8 > accumulated_data.size())
-                {
-                    break;
-                }
-
-                std::string complete_data = accumulated_data.substr(start_pos, end_pos - start_pos + 9);
-                accumulated_data.erase(0, end_pos + 8);
-
-                vector<std::string> joint_names;
-                vector<double> joint_positions;
-                parseJointData(complete_data, joint_names, joint_positions);
-                // 加锁
-                joint_positions_global = joint_positions;
-                double joint_angle[6];
-                for (int i = 0; i < 6; i++) joint_angle[i] = traj[cnt][i];
-                cnt++;
-                {
-                    std::lock_guard<mutex> lock(mtx);
-                    ret = robotService.robotServiceSetRobotPosData2Canbus(joint_angle);
-                }
-
-                if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
-                {
-                    robotService.robotServiceLeaveTcp2CanbusMode();
-                    return ret;
-                }
-
-                // 输出计算结果
-                std::cout << "Joint positions: ";
-                for (size_t i = 0; i < joint_positions.size(); ++i)
-                {
-                    std::cout << joint_positions[i] << " ";
-                }
-                std::cout << std::endl;
-
-                start_pos = accumulated_data.find("<PACK_BEGIN");
-                end_pos = accumulated_data.find("PACK_END>");
-            }
+            std::lock_guard<mutex> lock(control_mtx);
+            ret = robotService.robotServiceSetRobotPosData2Canbus(joint_angle);
         }
-        else
+        auto end = chrono::system_clock::now();
+        auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+        int cost = int(duration.count());
+        // cout << "cost:" << cost << "us" << endl;
+
+        if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
         {
-            close(sock);
-            sock = connectToServer(tcp_ip, tcp_port);
-            while (sock < 0)
-            {
-                sleep(1);
-                sock = connectToServer(tcp_ip, tcp_port);
-            }
+            robotService.robotServiceLeaveTcp2CanbusMode();
+            return ret;
         }
-        memset(buffer, 0, sizeof(buffer));
+
+        this_thread::sleep_for(chrono::microseconds(5000 - cost));
     }
-
-    // while (cnt < traj_sz)
-    // {
-    //     std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
-    //     double joint_angle[6];
-    //     for (int i = 0; i < 6; i++) joint_angle[i] = traj[cnt][i];
-    //     cnt++;
-    //     {
-    //         std::lock_guard<mutex> lock(mtx);
-    //         ret = robotService.robotServiceSetRobotPosData2Canbus(joint_angle);
-    //     }
-
-    //     if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
-    //     {
-    //         robotService.robotServiceLeaveTcp2CanbusMode();
-    //         return ret;
-    //     }
-
-    //     this_thread::sleep_for(chrono::milliseconds(5));
-    // }
 
     // 6. Leave Tcp2Canbus mode.
     ret = robotService.robotServiceLeaveTcp2CanbusMode();
@@ -368,6 +436,9 @@ int main()
 
     // 7. Logout
     robotService.robotServiceLogout();
+    key = 'q';
+    write_thread.join();
+    joint_status_thread.join();
 
     return 0;
 }
