@@ -118,6 +118,7 @@ if __name__=="__main__":
     root_path='record/effector_real_202410261700'
     camera_path=os.path.join(root_path,'camera.json')
     camera_matrix=np.array(load_json(camera_path)['camera_matrix'])
+    dist_coeffs=np.array(load_json(camera_path)['discoeffs'])
     img_paths=glob.glob(os.path.join(root_path,'*.png'))
     img_paths=sorted(img_paths)
     calibration_save_path=os.path.join(root_path,'calibration_ax_zb.json')

@@ -1,0 +1,6 @@
+include_directories("include")
+include_directories(${PROJECT_SOURCE_DIR}/third_party/aubo/inc)
+link_directories(${PROJECT_SOURCE_DIR}/third_party/aubo/lib/x64)
+file(GLOB_RECURSE USER_LIB_SRCS "src/*.cpp")
+add_library(AuboControl STATIC ${USER_LIB_SRCS})
+target_link_libraries(AuboControl ${ROBOT_DEPENLIBS})

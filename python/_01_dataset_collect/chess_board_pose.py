@@ -60,16 +60,17 @@ def get_RT_from_chessboard(img,camera_matrix):
 
 
 if __name__ == "__main__":
-
+    calibrate_cam=False
     time_str=time.strftime('%Y%m%d%H%M', time.localtime())
     save_path='record/effector_real_'+time_str
     os.makedirs(save_path,exist_ok=True)
-    robot.init()
+    if not calibrate_cam:
+        robot.init()
 
     num=0
     gts=[]
     # Configure depth and color streams
-    realsense_cam=create_camera('oak',1920,1080)
+    realsense_cam=create_camera('daheng',1920,1080)
     camera_matrix,coeff=realsense_cam.get_intrinsics()
 
     camera_parm={'camera_matrix':realsense_cam.get_intrinsics()[0].tolist(),'discoeffs':realsense_cam.get_intrinsics()[1].tolist()}
@@ -90,9 +91,9 @@ if __name__ == "__main__":
                 pose=robot.get_status()
                 Rend2base=R.from_euler('xyz',pose[3:]).as_matrix().tolist()
                 tend2base=np.array(pose[0:3]).tolist()
-
-                gt={"index":num,"R_e2b":Rend2base,"t_e2b":tend2base}
-                gts.append(gt)
+                if not calibrate_cam:
+                    gt={"index":num,"R_e2b":Rend2base,"t_e2b":tend2base}
+                    gts.append(gt)
                 num=num+1
                 print(f'保存位姿{num}')
             # Press esc or 'q' to close the image window
@@ -101,6 +102,7 @@ if __name__ == "__main__":
                 break
     finally:
         # Stop streaming
-        save_json(os.path.join(save_path,"record.json"),gts)
+        if not calibrate_cam:
+            save_json(os.path.join(save_path,"record.json"),gts)
         # realsense_cam.stop()
         robot.log_out()

@@ -7,7 +7,7 @@
 
 using namespace std;
 
-#define SERVER_HOST "192.168.31.6"
+#define SERVER_HOST "192.168.123.96"
 #define SERVER_PORT 8899
 
 #define FILE_PATH                                                    \
@@ -189,9 +189,7 @@ int main()
                 {
                     aubo_robot_namespace::wayPoint_S waypoint;
                     for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
-
                     cnt++;
-
                     waypoint_vector.push_back(waypoint);
                 }
             }

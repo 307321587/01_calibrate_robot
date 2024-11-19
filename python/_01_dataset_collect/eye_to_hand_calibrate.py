@@ -4,11 +4,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation as R
 import glob
 import os
-from dataset_collect.inout import load_json,save_json
-
-square_size = 0.02  # 标定板每个格子的尺寸（假设单位为米)
-reproj_threhold=0.5
-dist_coeffs = np.array([0, 0, 0, 0, 0], dtype=np.float64)  # 畸变系数  
+from dataset_collect.inout import load_json
+reproj_threhold=0.5 
 
 def euler2rot(euler):
     r = R.from_euler('xyz', euler, degrees=True)
@@ -16,68 +13,31 @@ def euler2rot(euler):
     return rotation_matrix
  
 def detect_aruco(img,camera_matrix):
-    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_ARUCO_ORIGINAL)
+    arucoDict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_100)
     arucoParams = cv2.aruco.DetectorParameters()
     detector=cv2.aruco.ArucoDetector(arucoDict)
     (corners, ids, rejected) = detector.detectMarkers(img)
-    marker_length=0.06
+    marker_length=0.1
     corners_3d=np.array([[-marker_length/2,marker_length/2,0],[marker_length/2,marker_length/2,0],[marker_length/2,-marker_length/2,0],[-marker_length/2,-marker_length/2,0]])
 
     if ids is not None:
-             
-        # cv2.aruco.drawDetectedMarkers(img, corners, ids)
-        # rvecs, tvecs,_=cv2.aruco.estimatePoseSingleMarkers(corners, 0.06, camera_matrix, np.zeros(5))
-        flag,rvecs,tvecs=cv2.solvePnP(corners_3d,corners[0],camera_matrix,np.zeros(5))
+        corners_detect=np.squeeze(corners[0])
+        flag,rvecs,tvecs=cv2.solvePnP(corners_3d,corners_detect,camera_matrix,np.zeros(5))
+        
+        repoj_corners_subpix, _ = cv2.projectPoints(corners_3d, rvecs, tvecs, camera_matrix, np.zeros(5))
+        repoj_corners_subpix=np.squeeze(repoj_corners_subpix)
+        repoj_error=np.mean(np.linalg.norm(corners_detect-repoj_corners_subpix,axis=1))
+        if repoj_error>reproj_threhold:
+            return None,None
         rvecs=np.squeeze(rvecs)
         tvecs=np.squeeze(tvecs)
-        cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
-        cv2.imshow('axis',img)
-        cv2.waitKey()
+        # cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
+        # cv2.imshow('axis',img)
+        # cv2.waitKey()
             # print(f"rotation: {rvec} translation:{tvec}") 
         return rvecs,tvecs
     return None,None
 
-
-def get_RT_from_chessboard(img,camera_matrix):
-    '''
-    :param img_path: 读取图片路径
-    :param chess_board_x_num: 棋盘格x方向格子数
-    :param chess_board_y_num: 棋盘格y方向格子数
-    :param K: 相机内参
-    :param chess_board_len: 单位棋盘格长度,mm
-    :return: 相机外参
-    '''
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    # size = gray.shape[::-1]
-    ret, corners = cv2.findChessboardCorners(img, (11, 8), flags=cv2.CALIB_CB_ADAPTIVE_THRESH|cv2.CALIB_CB_FAST_CHECK|cv2.CALIB_CB_NORMALIZE_IMAGE)  
-
-    
-
-    if ret:  # 如果成功找到了角点  
-        corners_subpix=cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.1))
-
-        obj_points = np.zeros((11*8,3),dtype=np.float64)
-        obj_points[:,:2] = np.mgrid[0:11,0:8].T.reshape(-1,2) * square_size
-        # print(object_points)
-        # 通过角点坐标和标定板的实际尺寸来计算标定板的位姿  
-        _,rvecs, tvecs,_ = cv2.solvePnPRansac(obj_points, corners_subpix, camera_matrix, dist_coeffs) 
-        RT=np.column_stack(((cv2.Rodrigues(rvecs))[0],tvecs))
-        RT = np.row_stack((RT, np.array([0, 0, 0, 1]))) 
-        # 计算重投影误差
-        repoj_corners_subpix, _ = cv2.projectPoints(obj_points, rvecs, tvecs, camera_matrix, dist_coeffs)
-        repoj_error=np.mean(np.linalg.norm(corners_subpix-repoj_corners_subpix,axis=1))
-        if repoj_error>reproj_threhold:
-            return None,None
-        cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
-        # cv2.imshow('axis',img)
-        # cv2.waitKey()
-        # print(f'reproje error:{repoj_error}')
-        rvecs=np.squeeze(rvecs)
-        tvecs=np.squeeze(tvecs)
-        return rvecs,tvecs
-    else:
-        return None,None
- 
 def cal_mean_diff(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,Rcam2base,tcam2base):
     Tgri2tar_s=[]
     # 重投影计算误差
@@ -93,8 +53,7 @@ def cal_mean_diff(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,Rcam2base,tcam2b
         cam2base[0:3,3]=tcam2base.squeeze()
         gri2tar=base2gri@cam2base@tar2cam
         Tgri2tar_s.append(gri2tar)
-        # print(gri2tar)
-
+        print(gri2tar)
 
     # 平均位姿
     Ttar2base_avg=np.mean(np.array(Tgri2tar_s),axis=0)
@@ -119,28 +78,24 @@ def cal_mean_diff(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,Rcam2base,tcam2b
     mean_angle=np.mean(mean_angle)
     mean_trans=np.mean(mean_trans)
     return mean_angle,mean_trans,Rtar2base_avg,ttar2base_avg,Tgri2tar_s
-
+ 
 
 if __name__=="__main__":
-    # 标定不能使用4：3分辨率，尤其是640 480 会标定失败
+
     root_path='record/effector_real_202410261700'
     camera_path=os.path.join(root_path,'camera.json')
     camera_matrix=np.array(load_json(camera_path)['camera_matrix'])
     img_paths=glob.glob(os.path.join(root_path,'*.png'))
     img_paths=sorted(img_paths)
-    calibration_save_path=os.path.join(root_path,'calibration.json')
-    calibration_save={}
-
     Rtar2cam_s=[]
     ttar2cam_s=[]
     delete_index=[]
     for index,img_path in enumerate(img_paths):
         img=cv2.imread(img_path)
-        rvec,tvec=get_RT_from_chessboard(img,camera_matrix)
+        rvec,tvec=detect_aruco(img,camera_matrix)
         if rvec is not None:
             Rtar2cam,_=cv2.Rodrigues(rvec)
             ttar2cam=np.array(tvec)
-            # print(f'{index:06d}:\n{Rtar2cam}')
             Rtar2cam_s.append(Rtar2cam)
             ttar2cam_s.append(ttar2cam)
         else:
@@ -159,30 +114,17 @@ if __name__=="__main__":
         robot_rot=np.array(data['R_e2b'])
         robot_t=np.array(data['t_e2b'])
         Tgri2base=np.vstack((np.hstack((robot_rot,robot_t[:,np.newaxis])),np.array([0,0,0,1])))
-        # print(R.from_matrix(robot_rot).as_euler('xyz',degrees=True))
+        print(R.from_matrix(robot_rot).as_euler('xyz',degrees=True))
         Tbase2gri=np.linalg.inv(Tgri2base)
 
         Rbase2gri_s.append(Tbase2gri[0:3,0:3])
         tbase2gri_s.append(Tbase2gri[0:3,3])
 
     Rcam2base,tcam2base=cv2.calibrateHandEye(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,cv2.CALIB_HAND_EYE_TSAI)
-    print(f'优化前旋转：\n{Rcam2base}')
-    print(f'优化前平移：\n{tcam2base}')
-    calibration_save['Rcam2base']=np.squeeze(Rcam2base).tolist()
-    calibration_save['tcam2base']=np.squeeze(tcam2base).tolist()
-
+    print(Rcam2base)
+    print(tcam2base)
     mean_angle,mean_trans,Rtar2base_avg,ttar2base_avg,Tgri2tar_s=cal_mean_diff(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,Rcam2base,tcam2base)
-    if mean_angle<0.5 and mean_trans<0.005:
-        print("标定成功")
-        print(f'平均角度误差(度):{mean_angle}')
-        print(f'平均平移误差(米):{mean_trans}')
-    else:
-        print("标定失败，重新采集数据集")
-        print(f'平均角度误差(度):{mean_angle}')
-        print(f'平均平移误差(米):{mean_trans}')
     
-
-
     # 取小于平均值的位姿再进行标定
     opt_Rtar2cam_s=[]
     opt_ttar2cam_s=[]
@@ -204,10 +146,8 @@ if __name__=="__main__":
             opt_Rtar2cam_s.append(Rtar2cam_s[index])
             opt_ttar2cam_s.append(ttar2cam_s[index])
     opt_Rcam2base,opt_tcam2base=cv2.calibrateHandEye(opt_Rbase2gri_s,opt_tbase2gri_s,opt_Rtar2cam_s,opt_ttar2cam_s,cv2.CALIB_HAND_EYE_TSAI)
-    print(f'优化后旋转：\n{opt_Rcam2base}')
-    print(f'优化后平移：\n{opt_tcam2base}')
-    calibration_save['opt_Rcam2base']=np.squeeze(opt_Rcam2base).tolist()
-    calibration_save['opt_tcam2base']=np.squeeze(opt_tcam2base).tolist()
+    print(opt_Rcam2base)
+    print(opt_tcam2base)
 
     mean_angle,mean_trans,Rtar2base_avg,ttar2base_avg,Tgri2tar_s=cal_mean_diff(opt_Rbase2gri_s,opt_tbase2gri_s,opt_Rtar2cam_s,opt_ttar2cam_s,opt_Rcam2base,opt_tcam2base)
 
@@ -219,4 +159,3 @@ if __name__=="__main__":
         print("标定失败，重新采集数据集")
         print(f'平均角度误差(度):{mean_angle}')
         print(f'平均平移误差(米):{mean_trans}')
-    save_json(calibration_save_path,calibration_save)
