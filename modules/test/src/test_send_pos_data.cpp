@@ -10,8 +10,8 @@ using namespace std;
 #define SERVER_HOST "192.168.123.96"
 #define SERVER_PORT 8899
 
-#define FILE_PATH                                                    \
-    "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/" \
+#define FILE_PATH                               \
+    "/home/lza/code/01_calibrate_robot/record/" \
     "record_line.offt"
 
 #define ROAD_POINT_RELOAD_SIZE 4 // 每一次下发的路点个数
@@ -37,7 +37,8 @@ public:
             }
             catch (const char *p)
             {
-                std::cerr << "Line: " << linenum << " \"" << p << "\"" << " is not a number of double" << std::endl;
+                std::cerr << "Line: " << linenum << " \"" << p << "\""
+                          << " is not a number of double" << std::endl;
                 break;
             }
             linenum++;
