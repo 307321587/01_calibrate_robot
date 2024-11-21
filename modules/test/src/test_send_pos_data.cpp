@@ -4,19 +4,26 @@
 #include <fstream>
 #include <iostream>
 #include <unistd.h>
-#include <chrono>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <jsoncpp/json/json.h>
+#include <mutex>
+#include <string>
 #include <thread>
 using namespace std;
 
 #define SERVER_HOST "192.168.123.96"
 #define SERVER_PORT 8899
 
-#define FILE_PATH                               \
-    "/home/lza/code/01_calibrate_robot/record/" \
+#define FILE_PATH                                                    \
+    "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/" \
     "record_line.offt"
 
 #define ROAD_POINT_RELOAD_SIZE 2 // 每一次下发的路点个数
-#define MAC_FIFO_FILL (6 * 3)    // 缓冲路点个数 * 6
+#define MAC_FIFO_FILL (6 * 4)    // 缓冲路点个数 * 6
+
+char volatile key = 'a';
+bool volatile read_flag = false; // 不加volatile在release模式下会出现问题
 
 class TrajectoryIo
 {
@@ -38,8 +45,7 @@ public:
             }
             catch (const char *p)
             {
-                std::cerr << "Line: " << linenum << " \"" << p << "\""
-                          << " is not a number of double" << std::endl;
+                std::cerr << "Line: " << linenum << " \"" << p << "\"" << " is not a number of double" << std::endl;
                 break;
             }
             linenum++;
@@ -86,8 +92,190 @@ private:
     std::ifstream input_file_;
 };
 
+int connectToServer(const std::string &ip, int port)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0)
+    {
+        // ROS_ERROR("Socket creation error");
+        return -1;
+    }
+
+    struct sockaddr_in serv_addr;
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_port = htons(port);
+
+    if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0)
+    {
+        // ROS_ERROR("Invalid address/ Address not supported");
+        close(sock);
+        return -1;
+    }
+
+    if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+    {
+        // ROS_ERROR("Connection Failed");
+        close(sock);
+        return -1;
+    }
+
+    // ROS_INFO("Connected to server at %s:%d", ip.c_str(), port);
+    return sock;
+}
+
+vector<double> joint_positions_global = {0, 0, 0, 0, 0, 0};
+std::mutex control_mtx;
+std::mutex read_save_mtx;
+
+void parseJointData(const std::string &data, std::vector<std::string> &joint_names, std::vector<double> &joint_positions)
+{
+    const std::string PACK_BEGIN = "<PACK_BEGIN";
+    const std::string PACK_END = "PACK_END>";
+
+    size_t start_pos = data.find(PACK_BEGIN);
+    size_t end_pos = data.find(PACK_END);
+
+    if (start_pos == std::string::npos || end_pos == std::string::npos || start_pos >= end_pos)
+    {
+        return;
+    }
+
+    start_pos += PACK_BEGIN.length();
+    size_t length_pos = start_pos;
+    start_pos += 8;
+
+    std::string length_str = data.substr(length_pos, 8);
+    size_t data_length = std::stoul(length_str);
+    if (end_pos - start_pos != data_length)
+    {
+        // ROS_WARN("Data length mismatch. Expected: %zu, Actual: %zu", data_length, end_pos - start_pos);
+        return;
+    }
+
+    std::string json_str = data.substr(start_pos, data_length);
+    // ROS_INFO("Extracted JSON string: %s", json_str.c_str());
+
+    Json::Reader reader;
+    Json::Value root;
+
+    if (reader.parse(json_str, root))
+    {
+        // ROS_INFO("Parsed JSON successfully.");
+
+        const Json::Value jointPos = root["RobotJointStatus"]["jointPos"];
+        if (!jointPos.isNull() && jointPos.isArray())
+        {
+            std::vector<std::string> joint_names_temp = {"shoulder_joint", "upperArm_joint", "foreArm_joint", "wrist1_joint", "wrist2_joint", "wrist3_joint"};
+            for (Json::Value::ArrayIndex i = 0; i < jointPos.size(); ++i)
+            {
+                joint_positions.push_back(jointPos[i].asDouble());
+                joint_names.push_back(joint_names_temp[i]);
+            }
+        }
+    }
+}
+
+void realTimeCalJointStatus()
+{
+    std::string tcp_ip = SERVER_HOST;
+    int tcp_port = 8891;
+
+    int sock = connectToServer(tcp_ip, tcp_port);
+    if (sock < 0)
+    {
+        return;
+    }
+
+    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    ofstream file(path);
+    auto start = chrono::system_clock::now();
+
+    char buffer[1550] = {0};
+    std::string accumulated_data;
+    while (key != 'q')
+    {
+        int valread = 0;
+        {
+            std::lock_guard<mutex> lock(control_mtx);
+            valread = read(sock, buffer, sizeof(buffer));
+        }
+
+        bool success = (valread > 0);
+        if (success)
+        {
+            accumulated_data.append(buffer, valread);
+            size_t start_pos = accumulated_data.find("<PACK_BEGIN");
+            size_t end_pos = accumulated_data.find("PACK_END>");
+
+            while (start_pos != std::string::npos && end_pos != std::string::npos)
+            {
+                if (end_pos + 8 > accumulated_data.size())
+                {
+                    break;
+                }
+
+                std::string complete_data = accumulated_data.substr(start_pos, end_pos - start_pos + 9);
+                accumulated_data.erase(0, end_pos + 8);
+
+                vector<std::string> joint_names;
+                vector<double> joint_positions;
+
+                parseJointData(complete_data, joint_names, joint_positions);
+                // 加锁
+                joint_positions_global = joint_positions;
+
+                auto end = chrono::system_clock::now();
+                auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+                file << duration.count() << ",";
+                std::cout << duration.count() << ",";
+                for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
+                {
+                    if (pos == joint_positions_global.end() - 1)
+                    {
+                        std::cout << *pos << endl;
+                        file << *pos << endl;
+                    }
+                    else
+                    {
+                        std::cout << *pos << ",";
+                        file << *pos << ",";
+                    }
+                }
+
+                // 输出计算结果
+                // std::cout << "Joint positions: ";
+                // for (size_t i = 0; i < joint_positions.size(); ++i)
+                // {
+                //     std::cout << joint_positions[i] << " ";
+                // }
+                // std::cout << std::endl;
+
+                start_pos = accumulated_data.find("<PACK_BEGIN");
+                end_pos = accumulated_data.find("PACK_END>");
+            }
+        }
+        else
+        {
+            close(sock);
+
+            sock = connectToServer(tcp_ip, tcp_port);
+            while (sock < 0)
+            {
+                sleep(1);
+                sock = connectToServer(tcp_ip, tcp_port);
+            }
+        }
+        memset(buffer, 0, sizeof(buffer));
+        this_thread::sleep_for(chrono::microseconds(1000));
+    }
+    close(sock);
+    file.close();
+}
+
 int main()
 {
+    // std::thread joint_status_thread(realTimeCalJointStatus);
+
     // 0. Read waypoint file
     TrajectoryIo input(FILE_PATH);
 
@@ -153,35 +341,51 @@ int main()
         return ret;
     }
     std::cout << "Enter Tcp2Canbus mode succ." << std::endl;
-
     int cnt = 0;
+    auto all_start = chrono::system_clock::now();
+    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    ofstream file(path);
     while (cnt < traj_sz)
     {
         auto start = chrono::system_clock::now();
         std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
 
         // SimRobot: send 1 waypoint one time
-        if (mode == aubo_robot_namespace::RobotModeSimulator)
         {
-            aubo_robot_namespace::wayPoint_S waypoint;
-            for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
-
-            cnt++;
-
-            waypoint_vector.push_back(waypoint);
-        }
-        // RealRobot: send several waypoints one time
-        else
-        {
+            std::lock_guard<mutex> lock(control_mtx);
             // Read the buffer size of the interface board.
             aubo_robot_namespace::RobotDiagnosis robotDiagnosisInfo;
+            aubo_robot_namespace::JointParam roboJointParm;
             ret = robotService.robotServiceGetRobotDiagnosisInfo(robotDiagnosisInfo);
+            ret = robotService.robotServiceGetJointAngleInfo(roboJointParm);
+
+            auto end = chrono::system_clock::now();
+            auto duration = chrono::duration_cast<chrono::microseconds>(end - all_start);
+            file << duration.count() << ",";
+            std::cout << duration.count() << ",";
+            for (int index = 0; index < 6; index++)
+            {
+                if (index == 5)
+                {
+                    std::cout << roboJointParm.jointPos[index] << endl;
+                    file << roboJointParm.jointPos[index] << endl;
+                }
+                else
+                {
+                    std::cout << roboJointParm.jointPos[index] << ",";
+                    file << roboJointParm.jointPos[index] << ",";
+                }
+            }
+
             if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
             {
                 std::cout << "Get robot diagnosis info fail, ret = " << ret << std::endl;
                 break;
             }
-            std::cout << "Waypoint buffer size : " << robotDiagnosisInfo.macTargetPosDataSize << std::endl;
+            if (robotDiagnosisInfo.macTargetPosDataSize == 0)
+            {
+                std::cout << "Waypoint buffer size : " << robotDiagnosisInfo.macTargetPosDataSize << std::endl;
+            }
 
             // Send waypoint to arm if buffer size less than MAC_FIFO_FILL
             if (robotDiagnosisInfo.macTargetPosDataSize < MAC_FIFO_FILL)
@@ -197,24 +401,25 @@ int main()
             }
             else
             {
-                std::cout << "Buffer is full, wait." << std::endl;
+                // std::cout << "Buffer is full, wait." << std::endl;
             }
-        }
 
-        if (false == waypoint_vector.empty())
-        {
-            ret = robotService.robotServiceSetRobotPosData2Canbus(waypoint_vector);
-
-            if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
+            if (false == waypoint_vector.empty())
             {
-                robotService.robotServiceLeaveTcp2CanbusMode();
-                return ret;
+                ret = robotService.robotServiceSetRobotPosData2Canbus(waypoint_vector);
+
+                if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
+                {
+                    robotService.robotServiceLeaveTcp2CanbusMode();
+                    return ret;
+                }
             }
         }
         auto end = chrono::system_clock::now();
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
         int cost = duration.count();
-        cout << "cost:" << cost << "us" << endl;
+        // cout << "cost:" << cost << "us" << endl;
+
         this_thread::sleep_for(chrono::microseconds(5000 - cost));
         // usleep(5 * 1000 - cost);
         // do something...
@@ -228,6 +433,10 @@ int main()
 
     // 7. Logout
     robotService.robotServiceLogout();
+
+    key = 'q';
+    file.close();
+    // joint_status_thread.join();
 
     return 0;
 }

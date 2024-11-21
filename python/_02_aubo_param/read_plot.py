@@ -2,7 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-with open("/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data_10ms.txt","r") as file:
+with open("/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt","r") as file:
     joints_data=np.zeros((0,7))
     for line in file:
         joint_current=np.fromstring(line,sep=',')
