@@ -294,7 +294,7 @@ int main()
     //     perror("Sched_setaffinity fail!");
     // }
 
-    std::thread joint_status_thread(realTimeCalJointStatus);
+    // std::thread joint_status_thread(realTimeCalJointStatus);
     // 0. Read waypoint file
     TrajectoryIo input(FILE_PATH);
 
@@ -398,7 +398,7 @@ int main()
     // 7. Logout
     robotService.robotServiceLogout();
     key = 'q';
-    joint_status_thread.join();
+    // joint_status_thread.join();
 
     return 0;
 }

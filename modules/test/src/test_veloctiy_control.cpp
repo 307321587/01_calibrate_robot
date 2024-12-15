@@ -19,6 +19,9 @@
 
 #define SERVER_HOST "192.168.123.96"
 char key = 'a';
+#define ROAD_POINT_RELOAD_SIZE 2 // 每一次下发的路点个数
+#define MAC_FIFO_FILL (6 * 4)    // 缓冲路点个数 * 6
+
 using namespace std;
 void readTxt(const string& filename, Eigen::VectorXi size, Eigen::MatrixXd& matrix)
 {
@@ -192,7 +195,7 @@ void realTimeCalJointStatus()
                     joint_positions_global = joint_positions;
                 }
 
-                // // 输出计算结果
+                // 输出计算结果
                 // std::cout << "Joint positions: ";
                 // for (size_t i = 0; i < joint_positions.size(); ++i)
                 // {
@@ -277,19 +280,18 @@ void realTimeControl(Eigen::MatrixXd B_matrix, Eigen::MatrixXd S_matrix, Eigen::
 
     int acc_sum_count = 40;
     Eigen::VectorXd target_vel(6);
-    target_vel << 0, 0, 0, 0.01, 0, 0;
+    target_vel << 0, 0, 0, 0.001, 0, 0;
     Eigen::VectorXd max_acc(6);
     max_acc = target_vel / acc_sum_count;
     Eigen::VectorXd cur_vel(6);
     cur_vel << 0, 0, 0, 0, 0, 0;
     int count = 0;
-    int count_sum = 200;
+    int count_sum = 400;
     // 输入不为q
     while (key != 'q')
     {
         auto start = chrono::system_clock::now();
-
-        if (count == count_sum + acc_sum_count)
+        if (count == count_sum * 2 + acc_sum_count)
         {
             key = 'q';
             return;
@@ -305,7 +307,10 @@ void realTimeControl(Eigen::MatrixXd B_matrix, Eigen::MatrixXd S_matrix, Eigen::
         {
             cur_vel += max_acc;
         }
-        // cout << cur_vel << endl;
+        std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
+
+        // aubo_robot_namespace::JointParam roboJointParm;
+        // ret = robotService.robotServiceGetJointAngleInfo(roboJointParm);
         Eigen::MatrixXd joint_positions_matrix(6, 1);
         {
             std::lock_guard<mutex> lock(mtx);
@@ -314,27 +319,51 @@ void realTimeControl(Eigen::MatrixXd B_matrix, Eigen::MatrixXd S_matrix, Eigen::
                 joint_positions_matrix(i) = joint_positions_global[i];
             }
         }
-        std::cout << "current joint: " << joint_positions_matrix.transpose() << std::endl;
+
         Eigen::MatrixXd jacobi_b = mr::JacobianBody(B_matrix, joint_positions_matrix);
         Eigen::MatrixXd inverse_jacobi_b = jacobi_b.completeOrthogonalDecomposition().pseudoInverse();
         // 矩阵乘以向量
         Eigen::VectorXd joint_velocities = inverse_jacobi_b * cur_vel;
 
-        joint_positions_matrix += joint_velocities;
-        double joint_angle[6];
-        for (int i = 0; i < 6; i++) joint_angle[i] = joint_positions_matrix(i);
-        ret = robotService.robotServiceSetRobotPosData2Canbus(joint_angle);
-        // 输出计算结果
-        std::cout << "target joint: " << joint_positions_matrix.transpose() << std::endl;
+        // 获取队列内点数量
+        // aubo_robot_namespace::RobotDiagnosis robotDiagnosisInfo;
+        // ret = robotService.robotServiceGetRobotDiagnosisInfo(robotDiagnosisInfo);
+        // if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
+        // {
+        //     std::cout << "Get robot diagnosis info fail, ret = " << ret << std::endl;
+        //     break;
+        // }
+        // if (robotDiagnosisInfo.macTargetPosDataSize == 0)
+        // {
+        //     std::cout << "Waypoint buffer size : " << robotDiagnosisInfo.macTargetPosDataSize << std::endl;
+        // }
 
-        // Eigen::MatrixXd end_pose = mr::FKinBody(M_matrix, B_matrix, joint_positions_matrix);
-        // cout << end_pose << endl;
+        // if (robotDiagnosisInfo.macTargetPosDataSize < MAC_FIFO_FILL)
+        {
+            for (int i = 0; i < ROAD_POINT_RELOAD_SIZE; i++)
+            {
+                aubo_robot_namespace::wayPoint_S waypoint;
+                joint_positions_matrix += joint_velocities;
+                for (int i = 0; i < 6; i++) waypoint.jointpos[i] = joint_positions_matrix(i);
+                waypoint_vector.push_back(waypoint);
+            }
+        }
+
+        if (false == waypoint_vector.empty())
+        {
+            ret = robotService.robotServiceSetRobotPosData2Canbus(waypoint_vector);
+            if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
+            {
+                robotService.robotServiceLeaveTcp2CanbusMode();
+                return;
+            }
+        }
         count += 1;
         auto end = chrono::system_clock::now();
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
         int cost = duration.count();
         // cout << "cost:" << cost << "us" << endl;
-        this_thread::sleep_for(chrono::microseconds(5000 - cost));
+        this_thread::sleep_for(chrono::microseconds(5000 * ROAD_POINT_RELOAD_SIZE - cost));
     }
     // 6. Leave Tcp2Canbus mode.
     ret = robotService.robotServiceLeaveTcp2CanbusMode();
@@ -388,12 +417,12 @@ int main()
     readTxt(B_filename, B_S_size, B_matrix);
     readTxt(M_filename, M_size, M_matrix);
 
-    std::thread joint_status_thread(realTimeCalJointStatus);
-    usleep(5 * 10000);
+    // std::thread joint_status_thread(realTimeCalJointStatus);
+    // usleep(5 * 1000);
     std::thread control_thread(realTimeControl, B_matrix, S_matrix, M_matrix);
     std::thread key_watch_thread(keyWatch);
 
-    joint_status_thread.join();
+    // joint_status_thread.join();
     control_thread.join();
     key_watch_thread.join();
     // cout << S_matrix << endl;

@@ -3,7 +3,26 @@ import numpy as np
 import depthai as dai
 import gxipy as gx
 from time import sleep
+from threading import Event,Thread
 import cv2
+import multiprocessing as mp
+
+class Camera:
+    def __init__(self,width=1280,height=720):
+        self.width=width
+        self.height=height
+        pass
+
+    def get_color_image(self):
+        pass
+
+    def get_intrinsics(self):
+        pass
+
+    def stop(self):
+        pass
+
+
 class RealsenseCamera:
     def __init__(self,width=1280,height=720):
         # Configure depth and color streams
@@ -60,6 +79,10 @@ class OAKCamera:
         qRgb = self.device.getOutputQueue(name="still", maxSize=1, blocking=False)
         color_image=qRgb.get().getCvFrame()
 
+        self.record=False
+        self.update_flag=False
+        self.e = Event()
+
     def get_color_image(self):
         qRgb = self.device.getOutputQueue(name="still", maxSize=4, blocking=False)
         color_image=qRgb.get()
@@ -68,14 +91,56 @@ class OAKCamera:
     
     def get_intrinsics(self):
         calibData = self.device.readCalibration()
-        # camera_matrix = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A, self.width, self.height))
-        camera_matrix=np.array([[1543.96624464076, 0.0, 958.115323380734], [0.0, 1543.86647915387, 535.854123578914], [0.0, 0.0, 1.0]])
+        camera_matrix = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A, self.width, self.height))
+        # camera_matrix=np.array([[1543.96624464076, 0.0, 958.115323380734], [0.0, 1543.86647915387, 535.854123578914], [0.0, 0.0, 1.0]])
         print(f"RGB Camera resized intrinsics... {self.width} x {self.height}:\n {camera_matrix}")
-        # coeffs=np.array(calibData.getDistortionCoefficients(dai.CameraBoardSocket.CAM_A))
-        # print("Coefficients...")
-        # [print(name+": "+value) for (name, value) in zip(["k1","k2","p1","p2","k3","k4","k5","k6","s1","s2","s3","s4","τx","τy"],[str(data) for data in coeffs])]
-        coeffs=np.array([0.108291528595848,-0.202884682353348,0,0,0])
+        coeffs=np.array(calibData.getDistortionCoefficients(dai.CameraBoardSocket.CAM_A))
+        print("Coefficients...")
+        [print(name+": "+value) for (name, value) in zip(["k1","k2","p1","p2","k3","k4","k5","k6","s1","s2","s3","s4","τx","τy"],[str(data) for data in coeffs])]
+        # coeffs=np.array([0.108291528595848,-0.202884682353348,0,0,0])
         return camera_matrix,coeffs
+    
+    def start_recording(self,video_file_name):
+        self.video_file = video_file_name
+        self.video_file_name = video_file_name + '.avi'
+
+        # Set up codec and output video settings
+        self.codec = cv2.VideoWriter_fourcc(*'XVID')
+        self.output_video = cv2.VideoWriter(self.video_file_name, self.codec, 30, (self.width, self.height))
+        self.record=True
+
+        self.thread = Thread(target=self.update, args=())
+        self.thread.daemon = True
+        self.thread.start()
+        # Start the thread to read frames from the video stream
+
+        # mp.set_start_method(method='spawn')  # init
+        # self.queue = mp.Queue(maxsize=2)
+        
+        # self.process=mp.Process(target=self.update, args=(self.queue,))
+        # self.process.daemon = True
+        # self.process.start()
+
+        print('initialized {}'.format(self.video_file))
+    def set_record_frame(self,frame):
+        if self.record:
+            self.record_frame=frame
+            self.e.set()
+    def update(self):
+        while self.record:
+            
+            # frame = q.get()
+            self.e.wait()
+            self.output_video.write(self.record_frame)
+            self.e.clear()
+        self.output_video.release()
+    def release(self):
+        self.record=False
+        if self.output_video is not None:
+            self.thread.join()
+            
+
+
     
 
 class DahengCamera:

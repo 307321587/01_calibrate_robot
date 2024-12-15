@@ -27,11 +27,11 @@ if __name__=="__main__":
     save_path='record/effector_real_'+time_str
     os.makedirs(save_path,exist_ok=True)
 
-    copy_path='record/effector_real_202411072045'
+    copy_path='record/effector_real_202411271626'
     datas=load_json(os.path.join(copy_path,'record.json'))
 
     robot.init()
-
+    robot.movej(np.deg2rad([-90,0,90,0,90,0]))
     realsense_cam=create_camera('oak',1920,1080)
 
     camera_parm={'camera_matrix':realsense_cam.get_intrinsics()[0].tolist(),'discoeffs':realsense_cam.get_intrinsics()[1].tolist()}
@@ -40,22 +40,18 @@ if __name__=="__main__":
     gts=[]
     for index,data in enumerate(datas):
         
-        tend2base=np.array(data['t_e2b'])
-        Rend2base=np.array(data['R_e2b'])
-        euler=R.from_matrix(Rend2base).as_euler('xyz')
-        end_pose=tend2base
-        action=np.concatenate((end_pose,euler))
+        joint=np.array(data['joint'])
         # robot.movel_random_effctor(action,end_rot_angle[index])
         # robot.movel_random_effctor(action,-np.pi/2)
-        robot.movel(action)
-        time.sleep(5)
+        robot.movej(joint)
+        time.sleep(1)
         color_image=realsense_cam.get_color_image()
         pose=robot.get_status()
-        
+        joint=robot.get_joint()
         Rend2base=R.from_euler('xyz',pose[3:]).as_matrix().tolist()
         tend2base=np.array(pose[0:3]).tolist()
-
-        gt={"index":index,"R_e2b":Rend2base,"t_e2b":tend2base}
+        
+        gt={"index":index,"R_e2b":Rend2base,"t_e2b":tend2base,'joint':joint}
         gts.append(gt)
         img_path=os.path.join(save_path,f'{index:06d}.png')
         save_im(img_path,color_image[:,:,::-1])

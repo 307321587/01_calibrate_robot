@@ -196,7 +196,7 @@ void realTimeCalJointStatus()
     {
         int valread = 0;
         {
-            std::lock_guard<mutex> lock(control_mtx);
+            // std::lock_guard<mutex> lock(control_mtx);
             valread = read(sock, buffer, sizeof(buffer));
         }
 
@@ -227,17 +227,17 @@ void realTimeCalJointStatus()
                 auto end = chrono::system_clock::now();
                 auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
                 file << duration.count() << ",";
-                std::cout << duration.count() << ",";
+                // std::cout << duration.count() << ",";
                 for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
                 {
                     if (pos == joint_positions_global.end() - 1)
                     {
-                        std::cout << *pos << endl;
+                        // std::cout << *pos << endl;
                         file << *pos << endl;
                     }
                     else
                     {
-                        std::cout << *pos << ",";
+                        // std::cout << *pos << ",";
                         file << *pos << ",";
                     }
                 }
@@ -343,8 +343,11 @@ int main()
     std::cout << "Enter Tcp2Canbus mode succ." << std::endl;
     int cnt = 0;
     auto all_start = chrono::system_clock::now();
-    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
-    ofstream file(path);
+    // string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    // ofstream file(path);
+
+    std::thread joint_status_thread(realTimeCalJointStatus);
+
     while (cnt < traj_sz)
     {
         auto start = chrono::system_clock::now();
@@ -352,30 +355,30 @@ int main()
 
         // SimRobot: send 1 waypoint one time
         {
-            std::lock_guard<mutex> lock(control_mtx);
+            // std::lock_guard<mutex> lock(control_mtx);
             // Read the buffer size of the interface board.
             aubo_robot_namespace::RobotDiagnosis robotDiagnosisInfo;
             aubo_robot_namespace::JointParam roboJointParm;
             ret = robotService.robotServiceGetRobotDiagnosisInfo(robotDiagnosisInfo);
             ret = robotService.robotServiceGetJointAngleInfo(roboJointParm);
 
-            auto end = chrono::system_clock::now();
-            auto duration = chrono::duration_cast<chrono::microseconds>(end - all_start);
-            file << duration.count() << ",";
-            std::cout << duration.count() << ",";
-            for (int index = 0; index < 6; index++)
-            {
-                if (index == 5)
-                {
-                    std::cout << roboJointParm.jointPos[index] << endl;
-                    file << roboJointParm.jointPos[index] << endl;
-                }
-                else
-                {
-                    std::cout << roboJointParm.jointPos[index] << ",";
-                    file << roboJointParm.jointPos[index] << ",";
-                }
-            }
+            // auto end = chrono::system_clock::now();
+            // auto duration = chrono::duration_cast<chrono::microseconds>(end - all_start);
+            // file << duration.count() << ",";
+            // // std::cout << duration.count() << ",";
+            // for (int index = 0; index < 6; index++)
+            // {
+            //     if (index == 5)
+            //     {
+            //         // std::cout << roboJointParm.jointPos[index] << endl;
+            //         file << roboJointParm.jointPos[index] << endl;
+            //     }
+            //     else
+            //     {
+            //         // std::cout << roboJointParm.jointPos[index] << ",";
+            //         file << roboJointParm.jointPos[index] << ",";
+            //     }
+            // }
 
             if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
             {
@@ -391,12 +394,25 @@ int main()
             if (robotDiagnosisInfo.macTargetPosDataSize < MAC_FIFO_FILL)
             {
                 // Send up to ROAD_POINT_RELOAD_SIZE waypoints one time
-                for (int i = 0; i < ROAD_POINT_RELOAD_SIZE && cnt < traj_sz; i++)
+                // if (robotDiagnosisInfo.macTargetPosDataSize == 0)
+                // {
+                //     for (int i = 0; i < 2 * ROAD_POINT_RELOAD_SIZE && cnt < traj_sz; i++)
+                //     {
+                //         aubo_robot_namespace::wayPoint_S waypoint;
+                //         for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
+                //         cnt++;
+                //         waypoint_vector.push_back(waypoint);
+                //     }
+                // }
+                // else
                 {
-                    aubo_robot_namespace::wayPoint_S waypoint;
-                    for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
-                    cnt++;
-                    waypoint_vector.push_back(waypoint);
+                    for (int i = 0; i < ROAD_POINT_RELOAD_SIZE && cnt < traj_sz; i++)
+                    {
+                        aubo_robot_namespace::wayPoint_S waypoint;
+                        for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
+                        cnt++;
+                        waypoint_vector.push_back(waypoint);
+                    }
                 }
             }
             else
@@ -435,8 +451,8 @@ int main()
     robotService.robotServiceLogout();
 
     key = 'q';
-    file.close();
-    // joint_status_thread.join();
+    // file.close();
+    joint_status_thread.join();
 
     return 0;
 }

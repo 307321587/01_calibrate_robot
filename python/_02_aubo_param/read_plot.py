@@ -15,12 +15,14 @@ with open("/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_
     time=np.tile(time,(1,6))
     joints_data=joints_data[:,1:]
     joints_speed=np.diff(joints_data,axis=0)
-    diff_time=time[1:,:]
+    diff_time=np.diff(time,axis=0)
+    time_speed=time[1:,:]
+    # joints_speed=joints_speed/diff_time*1e6
     
     plt.subplot(2,1,1)
     plt.plot(time,joints_data)
     plt.legend(["j1","j2","j3","j4","j5","j6"])
     plt.subplot(2,1,2)
-    plt.plot(diff_time,joints_speed)
+    plt.plot(time_speed,joints_speed)
     plt.legend(["j1","j2","j3","j4","j5","j6"])
     plt.show()

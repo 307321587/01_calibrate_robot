@@ -10,6 +10,10 @@
 #include <unistd.h>
 #include <cmath>
 #include <vector>
+#include <visp3/core/vpColVector.h>
+#include <visp3/core/vpMatrix.h>
+#include "arrays.hpp"
+#include "vp_robot_aubo_robots.h"
 
 using namespace std;
 
@@ -160,6 +164,13 @@ void grsap(bool on)
     }
 }
 
+void print_vpMatrix(vpMatrix &test)
+{
+    cout << test << endl;
+    test[0][0] = 1;
+    cout << test << endl;
+}
+
 void log_out() { robotService.robotServiceLogout(); }
 
 PYBIND11_MODULE(robot, m)
@@ -174,4 +185,23 @@ PYBIND11_MODULE(robot, m)
     m.def("get_joint", &get_joint, "A function that adds two numbers");
     m.def("grsap", &grsap, "抓取io");
     m.def("movel_random_effctor", &movel_random_effctor, "随机添加末端旋转");
+    m.def("print_vpMatrix", &print_vpMatrix, "print vpMatrix");
+    pybind11::class_<vpArray2D<double>, std::shared_ptr<vpArray2D<double>>> pyArray2D(m, "vpArray2D", pybind11::buffer_protocol());
+    pybind11::class_<vpMatrix, std::shared_ptr<vpMatrix>, vpArray2D<double>> pyVpMatrix(m, "vpMatrix", pybind11::buffer_protocol());
+    py::class_<vpColVector, std::shared_ptr<vpColVector>, vpArray2D<double>> pyColVector(m, "vpColVector", pybind11::buffer_protocol());
+    bindings_vpArray2D(pyArray2D);
+    bindings_vpMatrix(pyVpMatrix);
+    bindings_vpColVector(pyColVector);
+
+    pybind11::class_<vpRobotAuboRobots>(m, "vpRobotAuboRobots")
+        .def(pybind11::init<const std::string &, bool>())
+        .def("setPosition", &vpRobotAuboRobots::setPosition)
+        .def("getPositionP", &vpRobotAuboRobots::getPositionP)
+        .def("setVelocity", &vpRobotAuboRobots::setVelocity)
+        .def("rtInit", &vpRobotAuboRobots::rtInit);
+    py::enum_<vpRobot::vpControlFrameType>(m, "vpControlFrameType", py::arithmetic())
+        .value("JOINT_STATE", vpRobot::vpControlFrameType::JOINT_STATE)
+        .value("END_EFFECTOR_FRAME", vpRobot::vpControlFrameType::END_EFFECTOR_FRAME)
+        .export_values();
+    // py::enum_<Flags>(m, "Flags", py::arithmetic()).value("Read", Flags::Read).value("Write", Flags::Write).value("Execute", Flags::Execute).export_values();
 }

@@ -3,5 +3,7 @@ record
 third_party
 *.pdf
 *.tar.gz
+*.mp4
+*.avi
 遨博机器人
 **/__pycache__/

@@ -70,7 +70,7 @@ if __name__ == "__main__":
     num=0
     gts=[]
     # Configure depth and color streams
-    realsense_cam=create_camera('daheng',1920,1080)
+    realsense_cam=create_camera('oak',1920,1080)
     camera_matrix,coeff=realsense_cam.get_intrinsics()
 
     camera_parm={'camera_matrix':realsense_cam.get_intrinsics()[0].tolist(),'discoeffs':realsense_cam.get_intrinsics()[1].tolist()}
@@ -91,8 +91,9 @@ if __name__ == "__main__":
                 pose=robot.get_status()
                 Rend2base=R.from_euler('xyz',pose[3:]).as_matrix().tolist()
                 tend2base=np.array(pose[0:3]).tolist()
+                joint=robot.get_joint()
                 if not calibrate_cam:
-                    gt={"index":num,"R_e2b":Rend2base,"t_e2b":tend2base}
+                    gt={"index":num,"R_e2b":Rend2base,"t_e2b":tend2base,'joint':joint}
                     gts.append(gt)
                 num=num+1
                 print(f'保存位姿{num}')

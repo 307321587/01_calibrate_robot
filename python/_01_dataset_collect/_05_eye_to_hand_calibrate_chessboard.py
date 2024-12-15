@@ -8,7 +8,6 @@ from dataset_collect.inout import load_json,save_json
 
 square_size = 0.02  # 标定板每个格子的尺寸（假设单位为米)
 reproj_threhold=0.5
-dist_coeffs = np.array([0, 0, 0, 0, 0], dtype=np.float64)  # 畸变系数  
 
 def euler2rot(euler):
     r = R.from_euler('xyz', euler, degrees=True)
@@ -38,7 +37,7 @@ def detect_aruco(img,camera_matrix):
     return None,None
 
 
-def get_RT_from_chessboard(img,camera_matrix):
+def get_RT_from_chessboard(undistort_img,camera_matrix):
     '''
     :param img_path: 读取图片路径
     :param chess_board_x_num: 棋盘格x方向格子数
@@ -47,9 +46,9 @@ def get_RT_from_chessboard(img,camera_matrix):
     :param chess_board_len: 单位棋盘格长度,mm
     :return: 相机外参
     '''
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.cvtColor(undistort_img, cv2.COLOR_BGR2GRAY)
     # size = gray.shape[::-1]
-    ret, corners = cv2.findChessboardCorners(img, (11, 8), flags=cv2.CALIB_CB_ADAPTIVE_THRESH|cv2.CALIB_CB_FAST_CHECK|cv2.CALIB_CB_NORMALIZE_IMAGE)  
+    ret, corners = cv2.findChessboardCorners(undistort_img, (11, 8), flags=cv2.CALIB_CB_ADAPTIVE_THRESH|cv2.CALIB_CB_FAST_CHECK|cv2.CALIB_CB_NORMALIZE_IMAGE)  
 
     
 
@@ -60,16 +59,17 @@ def get_RT_from_chessboard(img,camera_matrix):
         obj_points[:,:2] = np.mgrid[0:11,0:8].T.reshape(-1,2) * square_size
         # print(object_points)
         # 通过角点坐标和标定板的实际尺寸来计算标定板的位姿  
-        _,rvecs, tvecs,_ = cv2.solvePnPRansac(obj_points, corners_subpix, camera_matrix, dist_coeffs) 
+        _,rvecs, tvecs,_ = cv2.solvePnPRansac(obj_points, corners_subpix, camera_matrix, np.array([0,0,0,0,0], dtype=np.float64)) 
         RT=np.column_stack(((cv2.Rodrigues(rvecs))[0],tvecs))
         RT = np.row_stack((RT, np.array([0, 0, 0, 1]))) 
         # 计算重投影误差
-        repoj_corners_subpix, _ = cv2.projectPoints(obj_points, rvecs, tvecs, camera_matrix, dist_coeffs)
+        repoj_corners_subpix, _ = cv2.projectPoints(obj_points, rvecs, tvecs, camera_matrix,  np.array([0,0,0,0,0], dtype=np.float64))
         repoj_error=np.mean(np.linalg.norm(corners_subpix-repoj_corners_subpix,axis=1))
         if repoj_error>reproj_threhold:
             return None,None
-        cv2.drawFrameAxes(img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
-        cv2.imshow('axis',img)
+        # unsort_img=cv2.undistort(img,camera_matrix,dist_coeffs)
+        cv2.drawFrameAxes(undistort_img, camera_matrix, np.zeros(5), rvecs, tvecs, 0.1)
+        cv2.imshow('axis',undistort_img)
         cv2.waitKey()
         print(f'reproje error:{repoj_error}')
         rvecs=np.squeeze(rvecs)
@@ -123,7 +123,7 @@ def cal_mean_diff(Rbase2gri_s,tbase2gri_s,Rtar2cam_s,ttar2cam_s,Rcam2base,tcam2b
 
 if __name__=="__main__":
     # 标定不能使用4：3分辨率，尤其是640 480 会标定失败
-    root_path='record/effector_real_202410261700'
+    root_path='record/effector_real_202411241638'
     camera_path=os.path.join(root_path,'camera.json')
     camera_matrix=np.array(load_json(camera_path)['camera_matrix'])
     dist_coeffs=np.array(load_json(camera_path)['discoeffs'])
@@ -137,7 +137,8 @@ if __name__=="__main__":
     delete_index=[]
     for index,img_path in enumerate(img_paths):
         img=cv2.imread(img_path)
-        rvec,tvec=get_RT_from_chessboard(img,camera_matrix)
+        undistort_img=cv2.undistort(img,camera_matrix,dist_coeffs)
+        rvec,tvec=get_RT_from_chessboard(undistort_img,camera_matrix)
         if rvec is not None:
             Rtar2cam,_=cv2.Rodrigues(rvec)
             ttar2cam=np.array(tvec)

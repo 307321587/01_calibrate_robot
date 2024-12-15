@@ -4,7 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <opencv2/imgproc/types_c.h>
+#include <mutex>
 #include <thread>
+#include <vector>
+#include "modern_robotics.h"
 #include <assert.h>
 #include <visp3/core/vpColVector.h>
 #include <visp3/core/vpHomogeneousMatrix.h>
@@ -29,6 +32,7 @@ vpRobotAuboRobots::~vpRobotAuboRobots()
 {
     disconnect();
     if (m_rt_thread.joinable()) m_rt_thread.join();
+    if (m_rt_tcp_thread.joinable()) m_rt_tcp_thread.join();
 }
 
 /*!
@@ -74,18 +78,26 @@ void vpRobotAuboRobots::connect(const std::string &ip_address, bool rt_flag)
 
     if (rt_flag)
     {
-        // Avoid not leave tcp2canbus mode last time
-        m_robot_service.robotServiceLeaveTcp2CanbusMode();
-        // 4. Enter Tcp2Canbus mode
-        m_rt_connected = m_robot_service.robotServiceEnterTcp2CanbusMode();
-        if (m_rt_connected != aubo_robot_namespace::InterfaceCallSuccCode)
-        {
-            std::cout << "Enter Tcp2Canbus mode fail, m_rt_connected = " << m_rt_connected << std::endl;
-            return;
-        }
-        std::cout << "Enter Tcp2Canbus mode succ." << std::endl;
-        m_rt_thread = std::thread(&vpRobotAuboRobots::realTimeCalJointStatus, this, ip_address);
+        rtInit(ip_address);
     }
+}
+
+void vpRobotAuboRobots::rtInit(const std::string &ip_address)
+{
+    // Avoid not leave tcp2canbus mode last time
+    m_robot_service.robotServiceLeaveTcp2CanbusMode();
+    // 4. Enter Tcp2Canbus mode
+    m_rt_connected = m_robot_service.robotServiceEnterTcp2CanbusMode();
+    if (m_rt_connected != aubo_robot_namespace::InterfaceCallSuccCode)
+    {
+        std::cout << "Enter Tcp2Canbus mode fail, m_rt_connected = " << m_rt_connected << std::endl;
+        return;
+    }
+    std::cout << "Enter Tcp2Canbus mode succ." << std::endl;
+
+    m_stop_tcp_flag = false;
+    m_rt_thread = std::thread(&vpRobotAuboRobots::realTimeCalJointStatus, this, ip_address);
+    m_rt_tcp_thread = std::thread(&vpRobotAuboRobots::realTimeSendTcp, this);
 }
 
 /*!
@@ -96,8 +108,11 @@ void vpRobotAuboRobots::disconnect()
     // 退出tcp2can.
     if (m_rt_connected == aubo_robot_namespace::InterfaceCallSuccCode)
     {
-        m_robot_service.robotServiceLeaveTcp2CanbusMode();
+        m_stop_tcp_flag = true;
+        std::unique_lock<std::mutex> lock(m_quit_mutex);
+        m_quit_cv.wait(lock);
         m_rt_connected = 1;
+        m_robot_service.robotServiceLeaveTcp2CanbusMode();
     }
     sleep(1);
 
@@ -118,6 +133,20 @@ void vpRobotAuboRobots::init()
 {
     nDof = 6;
     m_vel_control_frame = vpRobot::JOINT_STATE;
+    m_cur_vel.resize(6);
+    m_cur_vel.setZero();
+
+    string S_filename = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/Slist.txt";
+    string B_filename = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/Blist.txt";
+    string M_filename = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/M.txt";
+    Eigen::VectorXi B_S_size(2);
+    B_S_size << 6, 6;
+    Eigen::VectorXi M_size(2);
+    M_size << 4, 4;
+
+    readTxt(S_filename, B_S_size, m_S_matrix);
+    readTxt(B_filename, B_S_size, m_B_matrix);
+    readTxt(M_filename, M_size, m_M_matrix);
 }
 
 /*!
@@ -216,17 +245,43 @@ void vpRobotAuboRobots::getPosition(const vpRobot::vpControlFrameType frame, vpC
             break;
         }
         case END_EFFECTOR_FRAME: {
-            aubo_robot_namespace::wayPoint_S currentWaypoint;
-            m_robot_service.robotServiceGetCurrentWaypointInfo(currentWaypoint);
-            aubo_robot_namespace::Rpy rpy;
-            m_robot_service.quaternionToRPY(currentWaypoint.orientation, rpy);
-            position.resize(6);
-            position[0] = currentWaypoint.cartPos.position.x;
-            position[1] = currentWaypoint.cartPos.position.y;
-            position[2] = currentWaypoint.cartPos.position.z;
-            position[3] = rpy.rx;
-            position[4] = rpy.ry;
-            position[5] = rpy.rz;
+            if (m_rt_connected != aubo_robot_namespace::InterfaceCallSuccCode)
+            {
+                aubo_robot_namespace::wayPoint_S currentWaypoint;
+                m_robot_service.robotServiceGetCurrentWaypointInfo(currentWaypoint);
+                aubo_robot_namespace::Rpy rpy;
+                m_robot_service.quaternionToRPY(currentWaypoint.orientation, rpy);
+                position.resize(6);
+                position[0] = currentWaypoint.cartPos.position.x;
+                position[1] = currentWaypoint.cartPos.position.y;
+                position[2] = currentWaypoint.cartPos.position.z;
+                position[3] = rpy.rx;
+                position[4] = rpy.ry;
+                position[5] = rpy.rz;
+            }
+            else
+            {
+                double joints[6];
+                {
+                    std::lock_guard<mutex> lock(m_tcp_mutex);
+                    if (m_rt_joints_postions.size() != 6) return;
+                    for (int i = 0; i < 6; i++)
+                    {
+                        joints[i] = m_rt_joints_postions[i];
+                    }
+                }
+                aubo_robot_namespace::wayPoint_S currentWaypoint;
+                m_robot_service.robotServiceRobotFk(joints, 6, currentWaypoint);
+                aubo_robot_namespace::Rpy rpy;
+                m_robot_service.quaternionToRPY(currentWaypoint.orientation, rpy);
+                position.resize(6);
+                position[0] = currentWaypoint.cartPos.position.x;
+                position[1] = currentWaypoint.cartPos.position.y;
+                position[2] = currentWaypoint.cartPos.position.z;
+                position[3] = rpy.rx;
+                position[4] = rpy.ry;
+                position[5] = rpy.rz;
+            }
         }
         break;
         case TOOL_FRAME: { // same a CAMERA_FRAME
@@ -255,7 +310,20 @@ void vpRobotAuboRobots::getPosition(const vpRobot::vpControlFrameType frame, vpC
         }
     }
 }
-
+std::vector<double> vpRobotAuboRobots::getPositionP(const vpRobot::vpControlFrameType frame)
+{
+    vpColVector position;
+    position.resize(6);
+    getPosition(frame, position);
+    std::vector<double> position_vec;
+    position_vec.push_back(position[0]);
+    position_vec.push_back(position[1]);
+    position_vec.push_back(position[2]);
+    position_vec.push_back(position[3]);
+    position_vec.push_back(position[4]);
+    position_vec.push_back(position[5]);
+    return position_vec;
+}
 /*!
  * Set the maximal velocity percentage to use for a position control.
  *
@@ -351,6 +419,11 @@ void vpRobotAuboRobots::setPosition(const vpRobot::vpControlFrameType frame, con
 
 void vpRobotAuboRobots::setVelocity(const vpRobot::vpControlFrameType frame, const vpColVector &vel)
 {
+    {
+        std::unique_lock<std::mutex> lock(m_vel_mutex);
+        for (int i = 0; i < 6; i++) m_cur_vel(i) = vel[i];
+    }
+
     // vpColVector vel_sat(6);
     // m_vel_control_frame = frame;
     // vel_sat = vel;
@@ -650,19 +723,20 @@ void vpRobotAuboRobots::realTimeCalJointStatus(const std::string &tcp_ip)
                 parseJointData(complete_data, joint_names, joint_positions);
                 // 加锁
                 {
-                    std::lock_guard<mutex> lock(m_control_mutex);
-                    rt_joints_postions = joint_positions;
+                    std::lock_guard<mutex> lock(m_tcp_mutex);
+                    m_rt_joints_postions = joint_positions;
                 }
+                m_tcp_cv.notify_one();
                 // 输出计算结果
                 now = std::chrono::system_clock::now();
                 auto duration = std::chrono::duration_cast<chrono::microseconds>(now - last);
                 last = now;
-                std::cout << "Duration:" << duration.count() << " Joint positions: ";
-                for (size_t i = 0; i < joint_positions.size(); ++i)
-                {
-                    std::cout << joint_positions[i] << " ";
-                }
-                std::cout << std::endl;
+                // std::cout << "Duration:" << duration.count() << " Joint positions: ";
+                // for (size_t i = 0; i < joint_positions.size(); ++i)
+                // {
+                //     std::cout << joint_positions[i] << " ";
+                // }
+                // std::cout << std::endl;
 
                 start_pos = accumulated_data.find("<PACK_BEGIN");
                 end_pos = accumulated_data.find("PACK_END>");
@@ -679,5 +753,93 @@ void vpRobotAuboRobots::realTimeCalJointStatus(const std::string &tcp_ip)
             }
         }
         memset(buffer, 0, sizeof(buffer));
+    }
+    cout << "realTimeCalJointStatus end" << endl;
+}
+
+void vpRobotAuboRobots::realTimeSendTcp()
+{
+    while (!m_stop_tcp_flag)
+    {
+        {
+            std::unique_lock<std::mutex> lock(m_tcp_mutex);
+            m_tcp_cv.wait(lock); // 等待通知
+        }
+
+        // cout << cur_vel << endl;
+        Eigen::MatrixXd joint_positions_matrix(6, 1);
+        {
+            // std::lock_guard<mutex> lock(mtx);
+            for (int i = 0; i < 6; i++)
+            {
+                joint_positions_matrix(i) = m_rt_joints_postions[i];
+            }
+        }
+        Eigen::MatrixXd jacobi_b = mr::JacobianBody(m_B_matrix, joint_positions_matrix);
+        Eigen::MatrixXd inverse_jacobi_b = jacobi_b.completeOrthogonalDecomposition().pseudoInverse();
+        // 矩阵乘以向量
+        Eigen::VectorXd joint_velocities;
+        {
+            std::unique_lock<std::mutex> lock(m_vel_mutex);
+            joint_velocities = inverse_jacobi_b * m_cur_vel;
+        }
+
+        // std::cout << "current joint: " << joint_positions_matrix.transpose() << std::endl;
+        joint_positions_matrix += joint_velocities;
+        double joint_angle[6];
+        for (int i = 0; i < 6; i++) joint_angle[i] = joint_positions_matrix(i);
+        int ret = m_robot_service.robotServiceSetRobotPosData2Canbus(joint_angle);
+        // 输出计算结果
+        // std::cout << "target joint: " << joint_positions_matrix.transpose() << std::endl;
+    }
+    cout << "realTimeSendTcp end" << endl;
+    m_quit_cv.notify_one();
+}
+
+void vpRobotAuboRobots::readTxt(const string &filename, Eigen::VectorXi size, Eigen::MatrixXd &matrix)
+{
+    matrix.resize(size(0), size(1));
+    ifstream file(filename);
+    if (!file.is_open())
+    {
+        cerr << "Failed to open file" << endl;
+        return;
+    }
+
+    vector<double> data;
+    string line;
+    while (getline(file, line))
+    {
+        istringstream iss(line);
+        istream_iterator<double> int_iter(iss);
+        istream_iterator<double> eof;
+        while (int_iter != eof)
+        {
+            data.push_back(*int_iter++);
+        }
+    }
+    file.close();
+
+    if (data.empty())
+    {
+        cerr << "File is empty or data is invalid" << endl;
+        return;
+    }
+    // 根据size构建矩阵，size的元素不定，可能为2或3
+    int index = 0;
+    for (int i = 0; i < size(0); ++i)
+    {
+        for (int j = 0; j < size(1); ++j)
+        {
+            if (index < data.size())
+            {
+                matrix(i, j) = data[index++];
+            }
+            else
+            {
+                cerr << "Data size does not match matrix size" << endl;
+                return;
+            }
+        }
     }
 }

@@ -11,6 +11,7 @@
 #include <jsoncpp/json/json.h>
 #include <mutex>
 #include <thread>
+#include <fstream>
 
 #define SERVER_HOST "192.168.123.96"
 char key = 'a';
@@ -99,16 +100,24 @@ void realTimeCalJointStatus()
         return;
     }
 
+    string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
+    ofstream file(path);
+    auto start = chrono::system_clock::now();
+
     char buffer[1550] = {0};
     std::string accumulated_data;
     while (key != 'q')
     {
-        int valread = read(sock, buffer, sizeof(buffer));
+        int valread = 0;
+        {
+            // std::lock_guard<mutex> lock(control_mtx);
+            valread = read(sock, buffer, sizeof(buffer));
+        }
+
         bool success = (valread > 0);
         if (success)
         {
             accumulated_data.append(buffer, valread);
-
             size_t start_pos = accumulated_data.find("<PACK_BEGIN");
             size_t end_pos = accumulated_data.find("PACK_END>");
 
@@ -124,7 +133,30 @@ void realTimeCalJointStatus()
 
                 vector<std::string> joint_names;
                 vector<double> joint_positions;
+
                 parseJointData(complete_data, joint_names, joint_positions);
+                // 加锁
+                joint_positions_global = joint_positions;
+
+                auto end = chrono::system_clock::now();
+                auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
+                file << duration.count() << ",";
+                std::cout << duration.count() << ",";
+                for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
+                {
+                    if (pos == joint_positions_global.end() - 1)
+                    {
+                        std::cout << *pos << endl;
+                        file << *pos << endl;
+                    }
+                    else
+                    {
+                        std::cout << *pos << ",";
+                        file << *pos << ",";
+                    }
+                }
+
+                // 输出计算结果
                 // std::cout << "Joint positions: ";
                 // for (size_t i = 0; i < joint_positions.size(); ++i)
                 // {
@@ -139,6 +171,7 @@ void realTimeCalJointStatus()
         else
         {
             close(sock);
+
             sock = connectToServer(tcp_ip, tcp_port);
             while (sock < 0)
             {
@@ -147,9 +180,11 @@ void realTimeCalJointStatus()
             }
         }
         memset(buffer, 0, sizeof(buffer));
+        this_thread::sleep_for(chrono::microseconds(1000));
     }
+    close(sock);
+    file.close();
 }
-
 void keyWatch() { cin >> key; }
 
 int main()

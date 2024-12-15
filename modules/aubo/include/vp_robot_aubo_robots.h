@@ -1,5 +1,6 @@
 #include "AuboRobotMetaType.h"
 #include "serviceinterface.h"
+#include <condition_variable>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -16,6 +17,8 @@
 #include <visp3/core/vpRzyxVector.h>
 #include <visp3/robot/vpRobot.h>
 #include <visp3/robot/vpRobotException.h>
+#include <Eigen/Dense>
+#include "modern_robotics.h"
 
 class vpRobotAuboRobots : public vpRobot
 {
@@ -32,9 +35,12 @@ public:
 
     void connect(const std::string &ip_address, bool rt_flag = false);
     void disconnect();
+    void rtInit(const std::string &ip_address);
     int connectRtServer(const std::string &ip, int port);
     void parseJointData(const std::string &data, std::vector<std::string> &joint_names, std::vector<double> &joint_positions);
     void realTimeCalJointStatus(const std::string &tcp_ip);
+    void realTimeSendTcp();
+    void readTxt(const std::string &filename, Eigen::VectorXi size, Eigen::MatrixXd &matrix);
 
     vpHomogeneousMatrix get_fMe();
     vpHomogeneousMatrix get_fMe(const vpColVector &q);
@@ -44,6 +50,7 @@ public:
     void getForceTorque(const vpRobot::vpControlFrameType frame, vpColVector &force);
     std::string getPolyScopeVersion();
     void getPosition(const vpRobot::vpControlFrameType frame, vpColVector &position) vp_override;
+    std::vector<double> getPositionP(const vpRobot::vpControlFrameType frame);
     int getRobotMode() const;
     std::string getRobotModel() const;
 
@@ -86,9 +93,9 @@ public:
 
 private:
     // Not implemented yet
-    void get_eJe(vpMatrix &_eJe) vp_override{};
-    void get_fJe(vpMatrix &_fJe) vp_override{};
-    void getDisplacement(const vpRobot::vpControlFrameType frame, vpColVector &q) vp_override{};
+    void get_eJe(vpMatrix &_eJe) vp_override {};
+    void get_fJe(vpMatrix &_fJe) vp_override {};
+    void getDisplacement(const vpRobot::vpControlFrameType frame, vpColVector &q) vp_override {};
 
 protected:
     void init();
@@ -108,7 +115,16 @@ protected:
     int m_control_port = 8899;
     int m_callback_port = 8891;
     ServiceInterface m_robot_service;
-    std::mutex m_control_mutex;
-    std::vector<double> rt_joints_postions;
+    std::vector<double> m_rt_joints_postions;
+    Eigen::MatrixXd m_B_matrix, m_S_matrix, m_M_matrix;
+    Eigen::VectorXd m_cur_vel;
     std::thread m_rt_thread;
+    std::thread m_rt_tcp_thread;
+    bool m_stop_tcp_flag = false;
+
+    std::condition_variable m_tcp_cv;
+    std::condition_variable m_quit_cv;
+    std::mutex m_tcp_mutex;
+    std::mutex m_quit_mutex;
+    std::mutex m_vel_mutex;
 };
