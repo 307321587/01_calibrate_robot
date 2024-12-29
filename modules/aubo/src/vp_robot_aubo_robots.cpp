@@ -4,7 +4,9 @@
 #include <chrono>
 #include <cmath>
 #include <opencv2/imgproc/types_c.h>
+#include <iostream>
 #include <mutex>
+#include <ostream>
 #include <thread>
 #include <vector>
 #include "modern_robotics.h"
@@ -132,6 +134,10 @@ void vpRobotAuboRobots::disconnect()
 void vpRobotAuboRobots::init()
 {
     nDof = 6;
+    m_joint_positions_matrix.resize(6, 1);
+    m_rt_joints_postions.resize(6, 1);
+    m_joint_positions_matrix.setZero();
+    m_rt_joints_postions.setZero();
     m_vel_control_frame = vpRobot::JOINT_STATE;
     m_cur_vel.resize(6);
     m_cur_vel.setZero();
@@ -264,10 +270,9 @@ void vpRobotAuboRobots::getPosition(const vpRobot::vpControlFrameType frame, vpC
                 double joints[6];
                 {
                     std::lock_guard<mutex> lock(m_tcp_mutex);
-                    if (m_rt_joints_postions.size() != 6) return;
                     for (int i = 0; i < 6; i++)
                     {
-                        joints[i] = m_rt_joints_postions[i];
+                        joints[i] = m_rt_joints_postions(i);
                     }
                 }
                 aubo_robot_namespace::wayPoint_S currentWaypoint;
@@ -423,116 +428,6 @@ void vpRobotAuboRobots::setVelocity(const vpRobot::vpControlFrameType frame, con
         std::unique_lock<std::mutex> lock(m_vel_mutex);
         for (int i = 0; i < 6; i++) m_cur_vel(i) = vel[i];
     }
-
-    // vpColVector vel_sat(6);
-    // m_vel_control_frame = frame;
-    // vel_sat = vel;
-
-    // // Set the maximal allowed velocities
-    // vpColVector v_max(6);
-    // for (int i = 0; i < 3; i++) v_max[i] = 0.3;             // in translation (m/s)
-    // for (int i = 3; i < 6; i++) v_max[i] = vpMath::rad(10); // in rotation (rad/s)
-
-    // // for (unsigned int i = 3; i < 6; i++)
-    // // {
-    // //     vel_sat[i]=0;
-    // // }
-
-    // // Velocity saturation
-    // switch (frame)
-    // {
-    //     // saturation in cartesian space
-    //     case vpRobot::CAMERA_FRAME:
-    //     case vpRobot::REFERENCE_FRAME:
-    //     case vpRobot::END_EFFECTOR_FRAME:
-    //     case vpRobot::MIXT_FRAME: {
-    //         vpColVector v_max(6);
-    //         for (int i = 0; i < 3; i++) v_max[i] = 0.1;             // in translation (m/s)
-    //         for (int i = 3; i < 6; i++) v_max[i] = vpMath::rad(20); // in rotation (rad/s)
-
-    //         break;
-    //     }
-    //     // Saturation in joint space
-    //     case vpRobot::JOINT_STATE: {
-    //         vpColVector vel_max(6);
-    //         vel_max = getMaxRotationVelocity();
-    //         vel_sat = vpRobot::saturateVelocities(vel, vel_max, true);
-    //     }
-    // }
-
-    // if (frame == vpRobot::JOINT_STATE)
-    // {
-    //     double acceleration = 0.5 * 1000;
-
-    //     float vel_sat_arrary[6] = {(float)vel_sat[0], (float)vel_sat[1], (float)vel_sat[2], (float)vel_sat[3], (float)vel_sat[4], (float)vel_sat[5]};
-    //     float acceleration_arrary[6] = {(float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration};
-
-    //     Drfl.speedj_rt(vel_sat_arrary, acceleration_arrary, m_dt);
-    // }
-    // else if (frame == vpRobot::REFERENCE_FRAME)
-    // {
-    //     double acceleration = 0.5 * 1000;
-
-    //     vpColVector vel_zyz_t = xyz_t2zyz_t(vel_sat);
-    //     float vel_sat_arrary[6] = {(float)(vel_zyz_t[0] * 1000),       (float)(vel_zyz_t[1] * 1000),       (float)(vel_zyz_t[2] * 1000),
-    //                                (float)(vel_zyz_t[3] / M_PI * 180), (float)(vel_zyz_t[4] / M_PI * 180), (float)(vel_zyz_t[5] / M_PI * 180)};
-    //     float acceleration_arrary[6] = {(float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration};
-
-    //     Drfl.speedl_rt(vel_sat_arrary, acceleration_arrary, m_dt);
-    // }
-    // else if (frame == vpRobot::END_EFFECTOR_FRAME)
-    // {
-    //     double acceleration = 0.5 * 1000;
-    //     vpVelocityTwistMatrix fVe(get_fMe(), false);
-    //     vpColVector vel_ = xyz_t2zyz_t(fVe * vel_sat * m_dt);
-    //     vel_ = vel_ / m_dt;
-
-    //     // Compute the saturated velocity skew vector
-    //     vpColVector vel_zyz_t = vpRobot::saturateVelocities(vel_, v_max, true);
-
-    //     float vel_sat_arrary[6] = {(float)(vel_zyz_t[0] * 1000),       (float)(vel_zyz_t[1] * 1000),       (float)(vel_zyz_t[2] * 1000),
-    //                                (float)(vel_zyz_t[3] / M_PI * 180), (float)(vel_zyz_t[4] / M_PI * 180), (float)(vel_zyz_t[5] / M_PI * 180)};
-    //     float acceleration_arrary[6] = {(float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration};
-
-    //     Drfl.speedl_rt(vel_sat_arrary, acceleration_arrary, m_dt);
-    // }
-    // else if (frame == vpRobot::CAMERA_FRAME)
-    // {
-    //     double acceleration = 0.25 * 1000;
-    //     vpColVector w_v_e = vpVelocityTwistMatrix(m_eMc) * vpVelocityTwistMatrix(get_fMe(), false) * vel_sat;
-
-    //     vpPoseVector current_pose_xyz;
-    //     getPosition(vpRobot::END_EFFECTOR_FRAME, current_pose_xyz);
-
-    //     vpRxyzVector current_pose_euler_xyz(current_pose_xyz[3], current_pose_xyz[4], current_pose_xyz[5]);
-    //     vpRzyxVector current_pose_euler_zyz(current_pose_euler_xyz);
-
-    //     vpRxyzVector w_v_e_euler_xyz(w_v_e[3], w_v_e[4], w_v_e[5]);
-
-    //     vpRxyzVector target_pose_euler_xyz(current_pose_euler_xyz[0] + w_v_e_euler_xyz[0] * m_dt, current_pose_euler_xyz[1] + w_v_e_euler_xyz[1] * m_dt,
-    //                                        current_pose_euler_xyz[2] + w_v_e_euler_xyz[2] * m_dt);
-    //     vpRxyzVector target_pose_euler_zyz(target_pose_euler_xyz);
-    //     vpColVector vel_ = {w_v_e[0],
-    //                         w_v_e[1],
-    //                         w_v_e[2],
-    //                         (target_pose_euler_zyz[0] - current_pose_euler_zyz[0]) / m_dt,
-    //                         (target_pose_euler_zyz[1] - current_pose_euler_zyz[1]) / m_dt,
-    //                         (target_pose_euler_zyz[2] - current_pose_euler_zyz[2]) / m_dt};
-
-    //     std::cout << "vel_zyz_t:" << vel_ << std::endl;
-    //     // Compute the saturated velocity skew vector
-    //     vpColVector vel_zyz_t = vpRobot::saturateVelocities(vel_, v_max, true);
-
-    //     float vel_sat_arrary[6] = {(float)(vel_zyz_t[0] * 1000),       (float)(vel_zyz_t[1] * 1000),       (float)(vel_zyz_t[2] * 1000),
-    //                                (float)(vel_zyz_t[3] / M_PI * 180), (float)(vel_zyz_t[4] / M_PI * 180), (float)(vel_zyz_t[5] / M_PI * 180)};
-    //     float acceleration_arrary[6] = {(float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration, (float)acceleration};
-
-    //     Drfl.speedl_rt(vel_sat_arrary, acceleration_arrary, m_dt);
-    // }
-    // else
-    // {
-    //     throw(vpException(vpRobotException::functionNotImplementedError, "Cannot move the robot in velocity in the specified frame: not implemented"));
-    // }
 }
 
 /*!
@@ -724,7 +619,24 @@ void vpRobotAuboRobots::realTimeCalJointStatus(const std::string &tcp_ip)
                 // 加锁
                 {
                     std::lock_guard<mutex> lock(m_tcp_mutex);
-                    m_rt_joints_postions = joint_positions;
+                    if (!m_init_robot_state)
+                    {
+                        m_init_robot_state = true;
+                        for (int i = 0; i < 6; i++)
+                        {
+                            if (abs(m_rt_joints_postions(i) - joint_positions[i]) > 1e-6)
+                            {
+                                m_init_robot_state = false;
+                            }
+                        }
+                        if (m_init_robot_state)
+                        {
+                            for (int i = 0; i < 6; i++) m_joint_positions_matrix(i) = m_rt_joints_postions(i);
+                            std::cout << "robot_init_success" << std::endl;
+                        }
+                    }
+                    for (int i = 0; i < 6; i++) m_rt_joints_postions(i) = joint_positions[i];
+                    // 进行状态初始化
                 }
                 m_tcp_cv.notify_one();
                 // 输出计算结果
@@ -757,6 +669,39 @@ void vpRobotAuboRobots::realTimeCalJointStatus(const std::string &tcp_ip)
     cout << "realTimeCalJointStatus end" << endl;
 }
 
+// void vpRobotAuboRobots::realTimeSendTcp()
+// {
+//     while (!m_stop_tcp_flag)
+//     {
+//         {
+//             std::unique_lock<std::mutex> lock(m_tcp_mutex);
+//             m_tcp_cv.wait(lock); // 等待通知
+//         }
+
+//         // cout << cur_vel << endl;
+//         if (!m_init_robot_state) continue; // 如果当前机器人初始状态没有完成
+
+//         Eigen::MatrixXd jacobi_b = mr::JacobianBody(m_B_matrix, m_joint_positions_matrix);
+//         Eigen::MatrixXd inverse_jacobi_b = jacobi_b.completeOrthogonalDecomposition().pseudoInverse();
+//         // 矩阵乘以向量
+//         Eigen::VectorXd joint_velocities;
+//         {
+//             std::unique_lock<std::mutex> lock(m_vel_mutex);
+//             joint_velocities = inverse_jacobi_b * m_cur_vel;
+//         }
+
+//         // std::cout << "current joint: " << m_joint_positions_matrix.transpose() << std::endl;
+//         m_joint_positions_matrix += (joint_velocities * m_dt);
+//         double joint_angle[6];
+//         for (int i = 0; i < 6; i++) joint_angle[i] = m_joint_positions_matrix(i);
+//         int ret = m_robot_service.robotServiceSetRobotPosData2Canbus(joint_angle);
+//         // 输出计算结果
+//         // std::cout << "target joint: " << m_joint_positions_matrix.transpose() << std::endl;
+//     }
+//     cout << "realTimeSendTcp end" << endl;
+//     m_quit_cv.notify_one();
+// }
+
 void vpRobotAuboRobots::realTimeSendTcp()
 {
     while (!m_stop_tcp_flag)
@@ -767,30 +712,47 @@ void vpRobotAuboRobots::realTimeSendTcp()
         }
 
         // cout << cur_vel << endl;
-        Eigen::MatrixXd joint_positions_matrix(6, 1);
+        if (!m_init_robot_state) continue; // 如果当前机器人初始状态没有完成
+
+        std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
+        aubo_robot_namespace::RobotDiagnosis robotDiagnosisInfo;
+        int ret = m_robot_service.robotServiceGetRobotDiagnosisInfo(robotDiagnosisInfo);
+
+        if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
         {
-            // std::lock_guard<mutex> lock(mtx);
-            for (int i = 0; i < 6; i++)
-            {
-                joint_positions_matrix(i) = m_rt_joints_postions[i];
-            }
+            std::cout << "Get robot diagnosis info fail, ret = " << ret << std::endl;
+            break;
         }
-        Eigen::MatrixXd jacobi_b = mr::JacobianBody(m_B_matrix, joint_positions_matrix);
-        Eigen::MatrixXd inverse_jacobi_b = jacobi_b.completeOrthogonalDecomposition().pseudoInverse();
-        // 矩阵乘以向量
-        Eigen::VectorXd joint_velocities;
+        if (robotDiagnosisInfo.macTargetPosDataSize == 0)
         {
-            std::unique_lock<std::mutex> lock(m_vel_mutex);
-            joint_velocities = inverse_jacobi_b * m_cur_vel;
+            std::cout << "Waypoint buffer size : " << robotDiagnosisInfo.macTargetPosDataSize << std::endl;
         }
 
-        // std::cout << "current joint: " << joint_positions_matrix.transpose() << std::endl;
-        joint_positions_matrix += joint_velocities;
-        double joint_angle[6];
-        for (int i = 0; i < 6; i++) joint_angle[i] = joint_positions_matrix(i);
-        int ret = m_robot_service.robotServiceSetRobotPosData2Canbus(joint_angle);
+        if (robotDiagnosisInfo.macTargetPosDataSize < m_road_point_reload_size * 4)
+        {
+            for (int pt = 0; pt < m_road_point_reload_size; pt++)
+            {
+                Eigen::MatrixXd jacobi_b = mr::JacobianBody(m_B_matrix, m_joint_positions_matrix);
+                Eigen::MatrixXd inverse_jacobi_b = jacobi_b.completeOrthogonalDecomposition().pseudoInverse();
+                // 矩阵乘以向量
+                Eigen::VectorXd joint_velocities;
+                {
+                    std::unique_lock<std::mutex> lock(m_vel_mutex);
+                    joint_velocities = inverse_jacobi_b * m_cur_vel;
+                }
+                m_joint_positions_matrix += (joint_velocities * m_dt);
+                aubo_robot_namespace::wayPoint_S waypoint;
+                for (int axis = 0; axis < 6; axis++) waypoint.jointpos[axis] = m_joint_positions_matrix(axis);
+                waypoint_vector.push_back(waypoint);
+            }
+        }
+
+        if (false == waypoint_vector.empty())
+        {
+            ret = m_robot_service.robotServiceSetRobotPosData2Canbus(waypoint_vector);
+        }
         // 输出计算结果
-        // std::cout << "target joint: " << joint_positions_matrix.transpose() << std::endl;
+        // std::cout << "target joint: " << m_joint_positions_matrix.transpose() << std::endl;
     }
     cout << "realTimeSendTcp end" << endl;
     m_quit_cv.notify_one();

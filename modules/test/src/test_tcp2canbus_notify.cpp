@@ -10,8 +10,12 @@
 #include <mutex>
 #include <string>
 #include <thread>
-using namespace std;
+#include <condition_variable>
+std::condition_variable cv;
 
+using namespace std;
+char volatile key = 'a';
+bool volatile read_flag = false; // 不加volatile在release模式下会出现问题
 #define SERVER_HOST "192.168.123.96"
 #define SERVER_PORT 8899
 
@@ -19,11 +23,8 @@ using namespace std;
     "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/" \
     "record_line.offt"
 
-#define ROAD_POINT_RELOAD_SIZE 6 // 每一次下发的路点个数
-#define MAC_FIFO_FILL (6 * 4)    // 缓冲路点个数 * 6
-
-char volatile key = 'a';
-bool volatile read_flag = false; // 不加volatile在release模式下会出现问题
+#define ROAD_POINT_RELOAD_SIZE 4 // 每一次下发的路点个数
+#define MAC_FIFO_FILL (6 * 15)   // 缓冲路点个数 * 6
 
 class TrajectoryIo
 {
@@ -195,10 +196,7 @@ void realTimeCalJointStatus()
     while (key != 'q')
     {
         int valread = 0;
-        {
-            // std::lock_guard<mutex> lock(control_mtx);
-            valread = read(sock, buffer, sizeof(buffer));
-        }
+        valread = read(sock, buffer, sizeof(buffer));
 
         bool success = (valread > 0);
         if (success)
@@ -222,22 +220,27 @@ void realTimeCalJointStatus()
 
                 parseJointData(complete_data, joint_names, joint_positions);
                 // 加锁
-                joint_positions_global = joint_positions;
+                // 加锁
+                {
+                    std::lock_guard<mutex> lock(control_mtx);
+                    joint_positions_global = joint_positions;
+                }
+                cv.notify_one();
 
                 auto end = chrono::system_clock::now();
                 auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
                 file << duration.count() << ",";
-                // std::cout << duration.count() << ",";
+                std::cout << duration.count() << ",";
                 for (auto pos = joint_positions_global.begin(); pos != joint_positions_global.end(); pos++)
                 {
                     if (pos == joint_positions_global.end() - 1)
                     {
-                        // std::cout << *pos << endl;
+                        std::cout << *pos << endl;
                         file << *pos << endl;
                     }
                     else
                     {
-                        // std::cout << *pos << ",";
+                        std::cout << *pos << ",";
                         file << *pos << ",";
                     }
                 }
@@ -266,7 +269,7 @@ void realTimeCalJointStatus()
             }
         }
         memset(buffer, 0, sizeof(buffer));
-        this_thread::sleep_for(chrono::microseconds(1000));
+        // this_thread::sleep_for(chrono::microseconds(1000));
     }
     close(sock);
     file.close();
@@ -274,8 +277,28 @@ void realTimeCalJointStatus()
 
 int main()
 {
-    // std::thread joint_status_thread(realTimeCalJointStatus);
+    // // 实时优先级最大值、最小值
+    // int sched_max = sched_get_priority_max(SCHED_FIFO);
 
+    // // 设置实时调度策略及优先级
+    // struct sched_param sParam;
+    // sParam.sched_priority = sched_max;
+    // sched_setscheduler(0, SCHED_FIFO, &sParam);
+    // auto i_schedFlag = sched_getscheduler(0);
+    // printf("设置调度策略 = [%d]\n", i_schedFlag);
+
+    // // 绑定CPU
+    // cpu_set_t cpuset;
+    // CPU_ZERO(&cpuset);
+    // CPU_SET(1, &cpuset);
+
+    // // bind process to processor 0
+    // if (sched_setaffinity(0, sizeof(cpuset), &cpuset) < 0)
+    // {
+    //     perror("Sched_setaffinity fail!");
+    // }
+
+    std::thread joint_status_thread(realTimeCalJointStatus);
     // 0. Read waypoint file
     TrajectoryIo input(FILE_PATH);
 
@@ -303,7 +326,7 @@ int main()
         return -1;
     }
 
-    aubo_robot_namespace::RobotWorkMode mode = aubo_robot_namespace::RobotModeSimulator;
+    aubo_robot_namespace::RobotWorkMode mode = aubo_robot_namespace::RobotModeReal;
     robotService.robotServiceGetRobotWorkMode(mode);
 
     // 2. Startup
@@ -341,104 +364,36 @@ int main()
         return ret;
     }
     std::cout << "Enter Tcp2Canbus mode succ." << std::endl;
+
+    // 5. Start send waypoint to arm
     int cnt = 0;
-    auto all_start = chrono::system_clock::now();
-    // string path = "/home/lza/code/04_uncalibrate_robot/01_calibrate_robot/record/joints_data.txt";
-    // ofstream file(path);
-
-    std::thread joint_status_thread(realTimeCalJointStatus);
-
     while (cnt < traj_sz)
     {
-        auto start = chrono::system_clock::now();
-        std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
-
-        // SimRobot: send 1 waypoint one time
         {
-            // std::lock_guard<mutex> lock(control_mtx);
-            // Read the buffer size of the interface board.
-            aubo_robot_namespace::RobotDiagnosis robotDiagnosisInfo;
-            aubo_robot_namespace::JointParam roboJointParm;
-            ret = robotService.robotServiceGetRobotDiagnosisInfo(robotDiagnosisInfo);
-            ret = robotService.robotServiceGetJointAngleInfo(roboJointParm);
-
-            // auto end = chrono::system_clock::now();
-            // auto duration = chrono::duration_cast<chrono::microseconds>(end - all_start);
-            // file << duration.count() << ",";
-            // // std::cout << duration.count() << ",";
-            // for (int index = 0; index < 6; index++)
-            // {
-            //     if (index == 5)
-            //     {
-            //         // std::cout << roboJointParm.jointPos[index] << endl;
-            //         file << roboJointParm.jointPos[index] << endl;
-            //     }
-            //     else
-            //     {
-            //         // std::cout << roboJointParm.jointPos[index] << ",";
-            //         file << roboJointParm.jointPos[index] << ",";
-            //     }
-            // }
-
-            if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
-            {
-                std::cout << "Get robot diagnosis info fail, ret = " << ret << std::endl;
-                break;
-            }
-            if (robotDiagnosisInfo.macTargetPosDataSize == 0)
-            {
-                std::cout << "Waypoint buffer size : " << robotDiagnosisInfo.macTargetPosDataSize << std::endl;
-            }
-
-            // Send waypoint to arm if buffer size less than MAC_FIFO_FILL
-            if (robotDiagnosisInfo.macTargetPosDataSize < MAC_FIFO_FILL)
-            {
-                // Send up to ROAD_POINT_RELOAD_SIZE waypoints one time
-                // if (robotDiagnosisInfo.macTargetPosDataSize == 0)
-                // {
-                //     for (int i = 0; i < 2 * ROAD_POINT_RELOAD_SIZE && cnt < traj_sz; i++)
-                //     {
-                //         aubo_robot_namespace::wayPoint_S waypoint;
-                //         for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
-                //         cnt++;
-                //         waypoint_vector.push_back(waypoint);
-                //     }
-                // }
-                // else
-                {
-                    for (int i = 0; i < ROAD_POINT_RELOAD_SIZE && cnt < traj_sz; i++)
-                    {
-                        aubo_robot_namespace::wayPoint_S waypoint;
-                        for (int i = 0; i < 6; i++) waypoint.jointpos[i] = traj[cnt][i];
-                        cnt++;
-                        waypoint_vector.push_back(waypoint);
-                    }
-                }
-            }
-            else
-            {
-                // std::cout << "Buffer is full, wait." << std::endl;
-            }
-
-            if (false == waypoint_vector.empty())
-            {
-                ret = robotService.robotServiceSetRobotPosData2Canbus(waypoint_vector);
-
-                if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
-                {
-                    robotService.robotServiceLeaveTcp2CanbusMode();
-                    return ret;
-                }
-            }
+            std::unique_lock<std::mutex> lock(control_mtx);
+            cv.wait(lock); // 等待通知
         }
+        std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector;
+        double joint_angle[6];
+        for (int i = 0; i < 6; i++) joint_angle[i] = traj[cnt][i];
+        cnt++;
+
+        auto start = chrono::system_clock::now();
+
+        ret = robotService.robotServiceSetRobotPosData2Canbus(joint_angle);
+
         auto end = chrono::system_clock::now();
         auto duration = chrono::duration_cast<chrono::microseconds>(end - start);
-        int cost = duration.count();
+        int cost = int(duration.count());
         // cout << "cost:" << cost << "us" << endl;
 
-        this_thread::sleep_for(chrono::microseconds(5000 - cost));
-        // usleep(5 * 1000 - cost);
-        // do something...
+        if (ret != aubo_robot_namespace::InterfaceCallSuccCode)
+        {
+            robotService.robotServiceLeaveTcp2CanbusMode();
+            return ret;
+        }
+
+        // this_thread::sleep_for(chrono::microseconds(5000 - cost));
     }
 
     // 6. Leave Tcp2Canbus mode.
@@ -449,9 +404,7 @@ int main()
 
     // 7. Logout
     robotService.robotServiceLogout();
-
     key = 'q';
-    // file.close();
     joint_status_thread.join();
 
     return 0;

@@ -68,7 +68,7 @@ int main()
         robot.setVelocity(vpRobot::END_EFFECTOR_FRAME, cur_vel);
         count++;
         position = robot.getPositionP(vpRobot::END_EFFECTOR_FRAME);
-        cout << position.t() << endl;
+        cout << "position:" << position.t() << endl;
         this_thread::sleep_for(chrono::microseconds(5000));
     }
     cout << "end" << endl;

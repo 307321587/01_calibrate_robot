@@ -115,16 +115,21 @@ protected:
     int m_control_port = 8899;
     int m_callback_port = 8891;
     ServiceInterface m_robot_service;
-    std::vector<double> m_rt_joints_postions;
+    Eigen::MatrixXd m_rt_joints_postions;
     Eigen::MatrixXd m_B_matrix, m_S_matrix, m_M_matrix;
     Eigen::VectorXd m_cur_vel;
+    Eigen::MatrixXd m_joint_positions_matrix;
     std::thread m_rt_thread;
     std::thread m_rt_tcp_thread;
     bool m_stop_tcp_flag = false;
+    bool m_init_robot_state = false;
 
     std::condition_variable m_tcp_cv;
     std::condition_variable m_quit_cv;
     std::mutex m_tcp_mutex;
     std::mutex m_quit_mutex;
     std::mutex m_vel_mutex;
+
+    // 设置上传路点vector buffer size
+    int m_road_point_reload_size = 4;
 };

@@ -92,12 +92,12 @@ class OAKCamera:
     def get_intrinsics(self):
         calibData = self.device.readCalibration()
         camera_matrix = np.array(calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_A, self.width, self.height))
-        # camera_matrix=np.array([[1543.96624464076, 0.0, 958.115323380734], [0.0, 1543.86647915387, 535.854123578914], [0.0, 0.0, 1.0]])
+        # camera_matrix=np.array([[1543.96624464076, 0.0, 958.115323380734], [0.0, 1543.86647915387, 535.854123578914], [0.0, 0.0, 1.0]]) 手动标定参数
         print(f"RGB Camera resized intrinsics... {self.width} x {self.height}:\n {camera_matrix}")
         coeffs=np.array(calibData.getDistortionCoefficients(dai.CameraBoardSocket.CAM_A))
         print("Coefficients...")
         [print(name+": "+value) for (name, value) in zip(["k1","k2","p1","p2","k3","k4","k5","k6","s1","s2","s3","s4","τx","τy"],[str(data) for data in coeffs])]
-        # coeffs=np.array([0.108291528595848,-0.202884682353348,0,0,0])
+        # coeffs=np.array([0.108291528595848,-0.202884682353348,0,0,0]) 手动标定参数
         return camera_matrix,coeffs
     
     def start_recording(self,video_file_name):
